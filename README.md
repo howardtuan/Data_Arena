@@ -1,6 +1,7 @@
 # DataArena
 
 DataArena 是依據專案計畫書實作的資料競賽平台。平台包含學生註冊登入、教師管理員登入、1-10 週正式題庫、Python 程式批改、全站排行榜、學生進度與教師後台。
+<img width="1469" height="890" alt="image" src="https://github.com/user-attachments/assets/2a8d0bc6-92d7-4a05-a57d-61175e6f6e24" />
 
 ## 預設帳號
 
