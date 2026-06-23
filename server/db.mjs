@@ -1,0 +1,204 @@
+import fs from "node:fs";
+import path from "node:path";
+import Database from "better-sqlite3";
+import bcrypt from "bcryptjs";
+import { config } from "./config.mjs";
+import { buildProblemBank } from "./problem-bank.mjs";
+
+let db;
+
+export function getDb() {
+  if (!db) {
+    fs.mkdirSync(path.dirname(config.dbPath), { recursive: true });
+    db = new Database(config.dbPath);
+    db.pragma("journal_mode = WAL");
+    db.pragma("foreign_keys = ON");
+    migrate(db);
+    seed(db);
+  }
+  return db;
+}
+
+export function closeDb() {
+  if (db) {
+    db.close();
+    db = undefined;
+  }
+}
+
+export function resetDatabaseFile() {
+  closeDb();
+  for (const suffix of ["", "-wal", "-shm"]) {
+    const target = `${config.dbPath}${suffix}`;
+    if (fs.existsSync(target)) fs.rmSync(target);
+  }
+  return getDb();
+}
+
+function migrate(database) {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      email TEXT NOT NULL UNIQUE,
+      student_id TEXT UNIQUE,
+      password_hash TEXT NOT NULL,
+      role TEXT NOT NULL CHECK (role IN ('student', 'admin')),
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS problems (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      slug TEXT NOT NULL UNIQUE,
+      week INTEGER NOT NULL,
+      series_title TEXT NOT NULL,
+      title TEXT NOT NULL,
+      difficulty INTEGER NOT NULL CHECK (difficulty BETWEEN 1 AND 3),
+      category TEXT NOT NULL,
+      time_limit_seconds INTEGER NOT NULL,
+      function_name TEXT NOT NULL,
+      signature_json TEXT NOT NULL,
+      statement TEXT NOT NULL,
+      input_format TEXT NOT NULL,
+      output_format TEXT NOT NULL,
+      constraints_text TEXT NOT NULL,
+      starter_code TEXT NOT NULL,
+      is_open INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS test_cases (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      problem_id INTEGER NOT NULL REFERENCES problems(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      visibility TEXT NOT NULL CHECK (visibility IN ('public', 'hidden')),
+      args_json TEXT NOT NULL,
+      expected_json TEXT NOT NULL,
+      comparator TEXT NOT NULL DEFAULT 'exact',
+      points INTEGER NOT NULL DEFAULT 1
+    );
+
+    CREATE TABLE IF NOT EXISTS submissions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      problem_id INTEGER NOT NULL REFERENCES problems(id) ON DELETE CASCADE,
+      code TEXT NOT NULL,
+      score INTEGER NOT NULL,
+      passed INTEGER NOT NULL,
+      passed_tests INTEGER NOT NULL,
+      total_tests INTEGER NOT NULL,
+      runtime_ms INTEGER NOT NULL,
+      details_json TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS attempts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      problem_id INTEGER NOT NULL REFERENCES problems(id) ON DELETE CASCADE,
+      day_key TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('active', 'passed', 'failed', 'timed_out', 'abandoned')),
+      started_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      ended_at TEXT,
+      score INTEGER NOT NULL DEFAULT 0,
+      submission_id INTEGER REFERENCES submissions(id) ON DELETE SET NULL,
+      focus_violations INTEGER NOT NULL DEFAULT 0,
+      end_reason TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_problems_week ON problems(week);
+    CREATE INDEX IF NOT EXISTS idx_submissions_user_problem ON submissions(user_id, problem_id);
+    CREATE INDEX IF NOT EXISTS idx_submissions_problem_score ON submissions(problem_id, score DESC, runtime_ms ASC);
+    CREATE INDEX IF NOT EXISTS idx_attempts_user_problem_day ON attempts(user_id, problem_id, day_key);
+    CREATE INDEX IF NOT EXISTS idx_attempts_status_expires ON attempts(status, expires_at);
+  `);
+  ensureColumn(database, "attempts", "focus_violations", "focus_violations INTEGER NOT NULL DEFAULT 0");
+}
+
+function ensureColumn(database, table, column, definition) {
+  const columns = database.prepare(`PRAGMA table_info(${table})`).all();
+  if (!columns.some((item) => item.name === column)) {
+    database.exec(`ALTER TABLE ${table} ADD COLUMN ${definition}`);
+  }
+}
+
+function seed(database) {
+  seedAdmin(database);
+  seedProblems(database);
+  makeAllTestCasesPublic(database);
+}
+
+function seedAdmin(database) {
+  const existing = database
+    .prepare("SELECT id FROM users WHERE role = 'admin' LIMIT 1")
+    .get();
+  if (existing) return;
+
+  database
+    .prepare(
+      `INSERT INTO users (name, email, student_id, password_hash, role)
+       VALUES (@name, @email, NULL, @passwordHash, 'admin')`
+    )
+    .run({
+      name: "DataArena 管理員",
+      email: config.adminEmail,
+      passwordHash: bcrypt.hashSync(config.adminPassword, 12)
+    });
+}
+
+function makeAllTestCasesPublic(database) {
+  database
+    .prepare(
+      `UPDATE test_cases
+       SET visibility = 'public',
+           name = REPLACE(name, 'Hidden', 'Test')
+       WHERE visibility <> 'public' OR name LIKE 'Hidden%'`
+    )
+    .run();
+}
+
+function seedProblems(database) {
+  const count = database.prepare("SELECT COUNT(*) AS count FROM problems").get().count;
+  if (count > 0) return;
+
+  const insertProblem = database.prepare(`
+    INSERT INTO problems (
+      slug, week, series_title, title, difficulty, category, time_limit_seconds,
+      function_name, signature_json, statement, input_format, output_format,
+      constraints_text, starter_code, is_open
+    )
+    VALUES (
+      @slug, @week, @seriesTitle, @title, @difficulty, @category, @timeLimitSeconds,
+      @functionName, @signatureJson, @statement, @inputFormat, @outputFormat,
+      @constraintsText, @starterCode, 1
+    )
+  `);
+  const insertCase = database.prepare(`
+    INSERT INTO test_cases (problem_id, name, visibility, args_json, expected_json, comparator, points)
+    VALUES (@problemId, @name, @visibility, @argsJson, @expectedJson, @comparator, @points)
+  `);
+
+  const transaction = database.transaction((problems) => {
+    for (const problem of problems) {
+      const result = insertProblem.run({
+        ...problem,
+        signatureJson: JSON.stringify(problem.signature)
+      });
+      const problemId = result.lastInsertRowid;
+      for (const testCase of problem.tests) {
+        insertCase.run({
+          problemId,
+          name: testCase.name,
+          visibility: testCase.visibility,
+          argsJson: JSON.stringify(testCase.args),
+          expectedJson: JSON.stringify(testCase.expected),
+          comparator: testCase.comparator || "exact",
+          points: testCase.points || 1
+        });
+      }
+    }
+  });
+
+  transaction(buildProblemBank());
+}

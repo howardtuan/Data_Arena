@@ -1,0 +1,20 @@
+services:
+  data-arena:
+    build: .
+    container_name: data-arena
+    ports:
+      - "8080:8080"
+    environment:
+      NODE_ENV: production
+      PORT: 8080
+      DB_PATH: /app/data/data-arena.sqlite
+      PYTHON_BIN: python3
+      JWT_SECRET: change-this-secret-before-public-launch
+      ADMIN_EMAIL: admin@dataarena.local
+      ADMIN_PASSWORD: DataArena@2026!
+    volumes:
+      - data-arena-data:/app/data
+    restart: unless-stopped
+
+volumes:
+  data-arena-data:
