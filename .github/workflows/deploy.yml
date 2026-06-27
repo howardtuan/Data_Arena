@@ -39,13 +39,13 @@ jobs:
     needs: build
 
     env:
-      SERVER_HOST: 140.120.53.252
-      SERVER_USER: 680-9000
+      SERVER_HOST: "140.120.53.252"
+      SERVER_USER: "680-9000"
       SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
       SERVER_PORT: ${{ secrets.SERVER_PORT }}
       DEPLOY_BRANCH: ${{ github.ref_name }}
       DEPLOY_SHA: ${{ github.sha }}
-      DEPLOY_PATH: C:\Users\680-9000\Desktop\Data_Arena
+      DEPLOY_PATH: "C:\\Users\\680-9000\\Desktop\\Data_Arena"
 
     steps:
       - name: Validate secrets
@@ -70,7 +70,29 @@ jobs:
           chmod 600 ~/.ssh/data_arena_deploy_key
 
           PORT="${SERVER_PORT:-22}"
-          ssh-keyscan -p "${PORT}" -H "${SERVER_HOST}" >> ~/.ssh/known_hosts
+          echo "Scanning SSH host key for ${SERVER_HOST}:${PORT}"
+          if ! ssh-keyscan -T 15 -p "${PORT}" -H "${SERVER_HOST}" >> ~/.ssh/known_hosts; then
+            echo "::error::Cannot read SSH host key from ${SERVER_HOST}:${PORT}. Check firewall, SSH server, and SERVER_PORT."
+            exit 1
+          fi
+
+      - name: Test SSH connection
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          PORT="${SERVER_PORT:-22}"
+
+          echo "Testing SSH login to ${SERVER_USER}@${SERVER_HOST}:${PORT}"
+          ssh \
+            -vv \
+            -o BatchMode=yes \
+            -o ConnectTimeout=20 \
+            -o StrictHostKeyChecking=yes \
+            -i ~/.ssh/data_arena_deploy_key \
+            -p "${PORT}" \
+            "${SERVER_USER}@${SERVER_HOST}" \
+            "powershell -NoProfile -NonInteractive -Command \"Write-Host 'ssh-ok'; whoami\""
 
       - name: Deploy with Docker Compose
         shell: bash
@@ -131,6 +153,11 @@ jobs:
           ENCODED_SCRIPT="$(iconv -f UTF-8 -t UTF-16LE deploy.ps1 | base64 -w 0)"
 
           ssh \
+            -o BatchMode=yes \
+            -o ConnectTimeout=20 \
+            -o ServerAliveInterval=15 \
+            -o ServerAliveCountMax=2 \
+            -o StrictHostKeyChecking=yes \
             -i ~/.ssh/data_arena_deploy_key \
             -p "${PORT}" \
             "${SERVER_USER}@${SERVER_HOST}" \

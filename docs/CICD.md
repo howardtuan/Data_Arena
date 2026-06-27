@@ -70,3 +70,24 @@ That means deployment will stop instead of overwriting server-side changes if:
 - The server repo cannot fast-forward.
 
 Fix the server repo manually, then rerun the workflow.
+
+## Troubleshooting
+
+### Deploy fails with exit code 255
+
+Exit code `255` almost always means SSH failed before the deploy script could run.
+
+Common causes:
+
+- The server is not reachable from GitHub Actions on SSH port `22`.
+- Windows OpenSSH Server is not running.
+- Firewall/NAT blocks inbound SSH to `140.120.53.252`.
+- `SERVER_SSH_KEY` is not the private key that matches the public key on the server.
+- The public key is not in `C:\Users\680-9000\.ssh\authorized_keys`.
+- The SSH username is wrong.
+
+The workflow has a `Test SSH connection` step. Check that step first:
+
+- `Connection timed out`: network/firewall/port issue.
+- `Permission denied (publickey,...)`: key or `authorized_keys` issue.
+- `Host key verification failed`: host key changed; rerun after confirming the server identity.
