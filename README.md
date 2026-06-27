@@ -1,6 +1,6 @@
 # DataArena
 
-DataArena 是一個 LeetCode 風格的 Python 題目練習平台。學生可以登入、選題、開始限時作答、執行公開範例測資、正式 Submit；老師可以開放/關閉題目，也可以在後台上傳新題目與測資。
+DataArena 是一個資料探勘題目練習平台。學生可以登入、選題、開始限時作答、執行公開範例測資、正式 Submit；老師可以開放/關閉題目，也可以在後台上傳新題目與測資。
 ![首頁](image.png)
 ![example](image-1.png)
 ## 預設帳號
