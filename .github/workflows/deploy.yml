@@ -39,8 +39,8 @@ jobs:
     needs: build
 
     env:
-      SERVER_HOST: ${{ secrets.SERVER_HOST }}
-      SERVER_USER: ${{ secrets.SERVER_USER }}
+      SERVER_HOST: 140.120.53.252
+      SERVER_USER: 680-9000
       SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
       SERVER_PORT: ${{ secrets.SERVER_PORT }}
       DEPLOY_BRANCH: ${{ github.ref_name }}
@@ -52,16 +52,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
-          if [ -z "${SERVER_HOST}" ]; then
-            echo "::error::Missing GitHub secret: SERVER_HOST"
-            exit 1
-          fi
-
-          if [ -z "${SERVER_USER}" ]; then
-            echo "::error::Missing GitHub secret: SERVER_USER"
-            exit 1
-          fi
 
           if [ -z "${SERVER_SSH_KEY}" ]; then
             echo "::error::Missing GitHub secret: SERVER_SSH_KEY"

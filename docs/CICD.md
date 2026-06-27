@@ -11,8 +11,6 @@ GitHub Actions workflow: `.github/workflows/deploy.yml`
 
 Repository settings -> Secrets and variables -> Actions:
 
-- `SERVER_HOST`: `140.120.53.252`
-- `SERVER_USER`: `680-9000`
 - `SERVER_SSH_KEY`: private key for SSH login to the server
 
 Optional:
@@ -20,6 +18,11 @@ Optional:
 - `SERVER_PORT`: SSH port. Leave unset if the server uses port `22`.
 
 Do not commit private keys into the repo.
+
+The workflow deploys to:
+
+- Host: `140.120.53.252`
+- User: `680-9000`
 
 ## Server Requirements
 
