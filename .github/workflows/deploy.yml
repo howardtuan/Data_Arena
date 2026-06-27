@@ -67,8 +67,16 @@ jobs:
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
 
-          printf '%s\n' "${SERVER_SSH_KEY}" > ~/.ssh/data_arena_deploy_key
+          printf '%s\n' "${SERVER_SSH_KEY}" | tr -d '\r' > ~/.ssh/data_arena_deploy_key
           chmod 600 ~/.ssh/data_arena_deploy_key
+
+          if ! ssh-keygen -y -f ~/.ssh/data_arena_deploy_key > ~/.ssh/data_arena_deploy_key.pub; then
+            echo "::error::SERVER_SSH_KEY is not a valid unencrypted OpenSSH private key. Recreate the secret with the full private key, including BEGIN/END lines."
+            exit 1
+          fi
+
+          echo "Deploy key fingerprint:"
+          ssh-keygen -lf ~/.ssh/data_arena_deploy_key.pub
 
           PORT="${SERVER_PORT:-22}"
           echo "Scanning SSH host key for ${SERVER_HOST}:${PORT}"
@@ -89,6 +97,8 @@ jobs:
             -vv \
             -o BatchMode=yes \
             -o ConnectTimeout=20 \
+            -o IdentitiesOnly=yes \
+            -o PreferredAuthentications=publickey \
             -o StrictHostKeyChecking=yes \
             -i ~/.ssh/data_arena_deploy_key \
             -p "${PORT}" \
@@ -156,6 +166,8 @@ jobs:
           ssh \
             -o BatchMode=yes \
             -o ConnectTimeout=20 \
+            -o IdentitiesOnly=yes \
+            -o PreferredAuthentications=publickey \
             -o ServerAliveInterval=15 \
             -o ServerAliveCountMax=2 \
             -o StrictHostKeyChecking=yes \
