@@ -29,57 +29,41 @@ export async function gradeSubmission({ functionName, code, testCases, publicOnl
       passedTests: 0,
       totalTests: selectedCases.length,
       runtimeMs,
-      details: selectedCases.map((testCase) => ({
-        id: testCase.id,
-        name: testCase.name,
-        visibility: "public",
-        passed: false,
-        args: JSON.parse(testCase.args_json),
-        expected: JSON.parse(testCase.expected_json),
-        message: runnerResult.error || "程式執行失敗"
-      }))
+      details: selectedCases.map((testCase) =>
+        buildDetail(testCase, {
+          passed: false,
+          message: runnerResult.error || "程式執行失敗"
+        })
+      )
     };
   }
 
   const details = selectedCases.map((testCase) => {
     const execution = runnerResult.results.find((item) => item.id === testCase.id);
     if (!execution) {
-      return {
-        id: testCase.id,
-        name: testCase.name,
-        visibility: "public",
+      return buildDetail(testCase, {
         passed: false,
-        args: JSON.parse(testCase.args_json),
-        expected: JSON.parse(testCase.expected_json),
-        message: "測資未產生執行結果"
-      };
+        message: "找不到測資執行結果"
+      });
     }
 
     const expected = JSON.parse(testCase.expected_json);
     if (!execution.ok) {
-      return {
-        id: testCase.id,
-        name: testCase.name,
-        visibility: "public",
+      return buildDetail(testCase, {
         passed: false,
-        args: JSON.parse(testCase.args_json),
         expected,
         error: execution.error,
-        message: "執行錯誤"
-      };
+        message: "執行時發生錯誤"
+      });
     }
 
     const comparison = compareResult(execution.result, expected, testCase.comparator);
-    return {
-      id: testCase.id,
-      name: testCase.name,
-      visibility: "public",
+    return buildDetail(testCase, {
       passed: comparison.passed,
-      args: JSON.parse(testCase.args_json),
       expected: testCase.comparator === "customOutput" ? undefined : expected,
       actual: execution.result,
       message: comparison.message
-    };
+    });
   });
 
   const passedTests = details.filter((detail) => detail.passed).length;
@@ -91,6 +75,25 @@ export async function gradeSubmission({ functionName, code, testCases, publicOnl
     totalTests: selectedCases.length,
     runtimeMs,
     details
+  };
+}
+
+function buildDetail(testCase, { passed, expected, actual, error, message }) {
+  const isPublic = testCase.visibility === "public";
+  return {
+    id: testCase.id,
+    name: testCase.name,
+    visibility: testCase.visibility,
+    passed,
+    ...(isPublic
+      ? {
+          args: JSON.parse(testCase.args_json),
+          ...(expected !== undefined ? { expected } : {}),
+          ...(actual !== undefined ? { actual } : {}),
+          ...(error ? { error } : {})
+        }
+      : {}),
+    message
   };
 }
 
@@ -115,9 +118,7 @@ function runPython(payload) {
 
     child.stdout.on("data", (chunk) => {
       stdout += chunk.toString();
-      if (stdout.length > 1024 * 1024) {
-        child.kill("SIGKILL");
-      }
+      if (stdout.length > 1024 * 1024) child.kill("SIGKILL");
     });
     child.stderr.on("data", (chunk) => {
       stderr += chunk.toString();
@@ -139,7 +140,7 @@ function runPython(payload) {
       try {
         resolve(JSON.parse(stdout));
       } catch {
-        resolve({ ok: false, error: "Python runner 回傳非 JSON 結果" });
+        resolve({ ok: false, error: "Python runner 回傳的 JSON 格式錯誤" });
       }
     });
 
@@ -149,17 +150,17 @@ function runPython(payload) {
 
 function compareResult(actual, expected, comparator) {
   if (comparator === "customOutput") {
-    return { passed: true, message: "自訂測資輸出" };
+    return { passed: true, message: "自訂輸出已執行" };
   }
   if (comparator === "number") {
     return compareNumber(actual, expected);
   }
   if (comparator === "deepNumber") {
     const passed = deepEqualNumber(actual, expected);
-    return { passed, message: passed ? "通過" : "輸出與預期不符" };
+    return { passed, message: passed ? "Accepted" : "輸出與預期不一致" };
   }
   const passed = deepEqualStrict(actual, expected);
-  return { passed, message: passed ? "通過" : "輸出與預期不符" };
+  return { passed, message: passed ? "Accepted" : "輸出與預期不一致" };
 }
 
 function compareNumber(actual, expected) {
@@ -167,7 +168,7 @@ function compareNumber(actual, expected) {
     typeof actual === "number" &&
     typeof expected === "number" &&
     Math.abs(actual - expected) <= 0.0001;
-  return { passed, message: passed ? "通過" : "數值誤差超過容許範圍" };
+  return { passed, message: passed ? "Accepted" : "數值誤差超過 0.0001" };
 }
 
 function deepEqualNumber(actual, expected) {

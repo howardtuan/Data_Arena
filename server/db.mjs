@@ -125,6 +125,7 @@ function ensureColumn(database, table, column, definition) {
 
 function seed(database) {
   seedAdmin(database);
+  seedSampleStudent(database);
   seedProblems(database);
   makeAllTestCasesPublic(database);
 }
@@ -144,6 +145,26 @@ function seedAdmin(database) {
       name: "DataArena 管理員",
       email: config.adminEmail,
       passwordHash: bcrypt.hashSync(config.adminPassword, 12)
+    });
+}
+
+function seedSampleStudent(database) {
+  const email = "student@dataarena.local";
+  const existing = database
+    .prepare("SELECT id FROM users WHERE email = ? LIMIT 1")
+    .get(email);
+  if (existing) return;
+
+  database
+    .prepare(
+      `INSERT INTO users (name, email, student_id, password_hash, role)
+       VALUES (@name, @email, @studentId, @passwordHash, 'student')`
+    )
+    .run({
+      name: "範例學生",
+      email,
+      studentId: "SAMPLE001",
+      passwordHash: bcrypt.hashSync("Student@2026!", 12)
     });
 }
 

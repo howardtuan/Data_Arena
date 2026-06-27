@@ -14,7 +14,7 @@ const DAILY_ATTEMPT_LIMIT = 3;
 
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(cors({ origin: true, credentials: true }));
-app.use(express.json({ limit: "256kb" }));
+app.use(express.json({ limit: "1mb" }));
 
 app.get("/api/health", (_req, res) => {
   const problemCount = db.prepare("SELECT COUNT(*) AS count FROM problems").get().count;
@@ -68,9 +68,15 @@ app.get("/api/auth/me", requireAuth, (req, res) => {
 
 app.get("/api/problems", optionalAuth, (req, res) => {
   const week = req.query.week ? Number(req.query.week) : undefined;
-  const rows = week
-    ? db.prepare("SELECT * FROM problems WHERE week = ? ORDER BY week, id").all(week)
-    : db.prepare("SELECT * FROM problems ORDER BY week, id").all();
+  const showClosed = req.user?.role === "admin";
+  const where = [
+    week ? "week = @week" : "",
+    showClosed ? "" : "is_open = 1"
+  ].filter(Boolean);
+  const problemQuery = db.prepare(
+    `SELECT * FROM problems${where.length ? ` WHERE ${where.join(" AND ")}` : ""} ORDER BY week, id`
+  );
+  const rows = week ? problemQuery.all({ week }) : problemQuery.all();
   const progress = req.user ? getProgressMap(req.user.id) : new Map();
   res.json({
     problems: rows.map((row) => ({
@@ -84,6 +90,7 @@ app.get("/api/problems", optionalAuth, (req, res) => {
 app.get("/api/problems/:slug", optionalAuth, (req, res) => {
   const problem = getProblemBySlug(req.params.slug);
   if (!problem) return res.status(404).json({ error: "找不到題目" });
+  if (!canSeeProblem(req.user, problem)) return res.status(404).json({ error: "找不到題目" });
   const publicTests = getTestCases(problem.id, "public").slice(0, 2);
   const best = req.user ? getBestSubmission(req.user.id, problem.id) : null;
   res.json({
@@ -102,6 +109,7 @@ app.get("/api/leaderboard", (_req, res) => {
 app.get("/api/problems/:slug/attempt-state", requireAuth, (req, res) => {
   const problem = getProblemBySlug(req.params.slug);
   if (!problem) return res.status(404).json({ error: "找不到題目" });
+  if (!canSeeProblem(req.user, problem)) return res.status(404).json({ error: "找不到題目" });
   res.json({ attemptState: getAttemptState(req.user.id, problem) });
 });
 
@@ -111,6 +119,8 @@ app.post("/api/problems/:slug/attempts/start", requireAuth, (req, res) => {
   if (!problem.is_open && req.user.role !== "admin") {
     return res.status(403).json({ error: "此題目前未開放作答" });
   }
+
+  if (!canSeeProblem(req.user, problem)) return res.status(404).json({ error: "找不到題目" });
 
   syncExpiredAttempts();
   const state = getAttemptState(req.user.id, problem);
@@ -198,6 +208,7 @@ app.post("/api/problems/:slug/run", requireAuth, async (req, res, next) => {
   try {
     const problem = getProblemBySlug(req.params.slug);
     if (!problem) return res.status(404).json({ error: "找不到題目" });
+    if (!canSeeProblem(req.user, problem)) return res.status(404).json({ error: "找不到題目" });
     const code = String(req.body?.code || "");
     if (!code.trim()) return res.status(400).json({ error: "請提交程式碼" });
     const attempt = requireActiveAttempt(req, problem);
@@ -221,6 +232,7 @@ app.post("/api/problems/:slug/submit", requireAuth, async (req, res, next) => {
     if (!problem.is_open && req.user.role !== "admin") {
       return res.status(403).json({ error: "此題目前未開放提交" });
     }
+    if (!canSeeProblem(req.user, problem)) return res.status(404).json({ error: "找不到題目" });
     const code = String(req.body?.code || "");
     if (!code.trim()) return res.status(400).json({ error: "請提交程式碼" });
     const attempt = requireActiveAttempt(req, problem);
@@ -288,10 +300,11 @@ app.get("/api/me/progress", requireAuth, (req, res) => {
         MAX(s.created_at) AS last_submission
        FROM problems p
        LEFT JOIN submissions s ON s.problem_id = p.id AND s.user_id = ?
+       WHERE (? = 'admin' OR p.is_open = 1)
        GROUP BY p.id
        ORDER BY p.week, p.id`
     )
-    .all(req.user.id);
+    .all(req.user.id, req.user.role);
   res.json({ progress: rows });
 });
 
@@ -299,6 +312,7 @@ app.get("/api/admin/dashboard", requireAdmin, (_req, res) => {
   const counts = {
     students: db.prepare("SELECT COUNT(*) AS count FROM users WHERE role = 'student'").get().count,
     problems: db.prepare("SELECT COUNT(*) AS count FROM problems").get().count,
+    openProblems: db.prepare("SELECT COUNT(*) AS count FROM problems WHERE is_open = 1").get().count,
     submissions: db.prepare("SELECT COUNT(*) AS count FROM submissions").get().count,
     attempts: db.prepare("SELECT COUNT(*) AS count FROM attempts").get().count,
     passedSubmissions: db.prepare("SELECT COUNT(*) AS count FROM submissions WHERE passed = 1").get().count
@@ -340,6 +354,67 @@ app.get("/api/admin/users", requireAdmin, (_req, res) => {
 app.get("/api/admin/problems", requireAdmin, (_req, res) => {
   const rows = db.prepare("SELECT * FROM problems ORDER BY week, id").all();
   res.json({ problems: rows.map(publicProblem) });
+});
+
+app.post("/api/admin/problems", requireAdmin, (req, res) => {
+  const parsed = normalizeProblemPayload(req.body || {});
+  if (parsed.errors.length) {
+    return res.status(400).json({ error: parsed.errors.join("；") });
+  }
+
+  const createProblem = db.transaction((problem) => {
+    const result = db
+      .prepare(
+        `INSERT INTO problems (
+          slug, week, series_title, title, difficulty, category, time_limit_seconds,
+          function_name, signature_json, statement, input_format, output_format,
+          constraints_text, starter_code, is_open
+        )
+        VALUES (
+          @slug, @week, @seriesTitle, @title, @difficulty, @category, @timeLimitSeconds,
+          @functionName, @signatureJson, @statement, @inputFormat, @outputFormat,
+          @constraintsText, @starterCode, @isOpen
+        )`
+      )
+      .run({
+        ...problem,
+        signatureJson: JSON.stringify(problem.signature),
+        isOpen: problem.isOpen ? 1 : 0
+      });
+
+    const insertCase = db.prepare(
+      `INSERT INTO test_cases (problem_id, name, visibility, args_json, expected_json, comparator, points)
+       VALUES (@problemId, @name, @visibility, @argsJson, @expectedJson, @comparator, @points)`
+    );
+    for (const testCase of problem.tests) {
+      insertCase.run({
+        problemId: result.lastInsertRowid,
+        name: testCase.name,
+        visibility: testCase.visibility,
+        argsJson: JSON.stringify(testCase.args),
+        expectedJson: JSON.stringify(testCase.expected),
+        comparator: testCase.comparator,
+        points: testCase.points
+      });
+    }
+    return result.lastInsertRowid;
+  });
+
+  try {
+    const id = createProblem(parsed.problem);
+    const created = db.prepare("SELECT * FROM problems WHERE id = ?").get(id);
+    res.status(201).json({
+      problem: {
+        ...publicProblem(created),
+        publicTests: getTestCases(id, "public").slice(0, 2).map(publicTestCase)
+      }
+    });
+  } catch (error) {
+    if (String(error.message).includes("UNIQUE")) {
+      return res.status(409).json({ error: "題目 slug 已存在，請換一個 slug 或標題。" });
+    }
+    throw error;
+  }
 });
 
 app.patch("/api/admin/problems/:id", requireAdmin, (req, res) => {
@@ -469,6 +544,10 @@ function getProblemBySlug(slug) {
   return db.prepare("SELECT * FROM problems WHERE slug = ?").get(slug);
 }
 
+function canSeeProblem(user, problem) {
+  return Boolean(problem?.is_open || user?.role === "admin");
+}
+
 function getTestCases(problemId, visibility) {
   const sql = visibility
     ? "SELECT * FROM test_cases WHERE problem_id = ? AND visibility = ? ORDER BY id"
@@ -507,6 +586,115 @@ function publicTestCase(row) {
     expected: JSON.parse(row.expected_json),
     comparator: row.comparator
   };
+}
+
+function normalizeProblemPayload(body) {
+  const errors = [];
+  const week = Number(body.week);
+  const difficulty = Number(body.difficulty);
+  const timeLimitSeconds = Number(body.timeLimitSeconds || body.time_limit_seconds || 1800);
+  const title = String(body.title || "").trim();
+  const functionName = String(body.functionName || "").trim();
+  const signature = Array.isArray(body.signature)
+    ? body.signature.map((item) => String(item).trim()).filter(Boolean)
+    : String(body.signature || "")
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean);
+  const tests = Array.isArray(body.tests) ? body.tests : [];
+
+  if (!Number.isInteger(week) || week < 1 || week > 99) errors.push("週次必須是 1 到 99 的整數");
+  if (!title) errors.push("請填寫題目標題");
+  if (!String(body.statement || "").trim()) errors.push("請填寫題目敘述");
+  if (!String(body.inputFormat || "").trim()) errors.push("請填寫輸入格式");
+  if (!String(body.outputFormat || "").trim()) errors.push("請填寫輸出格式");
+  if (!String(body.constraintsText || "").trim()) errors.push("請填寫限制條件");
+  if (!Number.isInteger(difficulty) || difficulty < 1 || difficulty > 3) errors.push("難度必須是 1、2 或 3");
+  if (!/^[A-Za-z_]\w*$/.test(functionName)) errors.push("函式名稱只能使用 Python identifier，例如 two_sum");
+  if (signature.length === 0) errors.push("至少需要一個函式參數");
+  for (const arg of signature) {
+    if (!/^[A-Za-z_]\w*$/.test(arg)) errors.push(`參數名稱 ${arg} 不是合法 Python identifier`);
+  }
+  if (!Number.isInteger(timeLimitSeconds) || timeLimitSeconds < 60 || timeLimitSeconds > 7200) {
+    errors.push("時間限制必須介於 60 到 7200 秒");
+  }
+
+  const normalizedTests = tests.map((testCase, index) => normalizeTestCase(testCase, index, errors));
+  if (normalizedTests.length === 0) errors.push("至少需要一筆測資");
+  if (!normalizedTests.some((testCase) => testCase.visibility === "public")) {
+    errors.push("至少需要一筆 public 測資，學生才會看到範例測資");
+  }
+
+  const slugBase = String(body.slug || "").trim() || `${week}-${title}`;
+  const slug = uniqueSlug(slugify(slugBase));
+  const starterCode =
+    String(body.starterCode || "").trim() ||
+    `def ${functionName}(${signature.join(", ")}):\n    # TODO: implement your solution\n    pass\n`;
+
+  return {
+    errors,
+    problem: {
+      slug,
+      week,
+      seriesTitle: String(body.seriesTitle || `Week ${week}`).trim(),
+      title,
+      difficulty,
+      category: String(body.category || "Python").trim(),
+      timeLimitSeconds,
+      functionName,
+      signature,
+      statement: String(body.statement || "").trim(),
+      inputFormat: String(body.inputFormat || "").trim(),
+      outputFormat: String(body.outputFormat || "").trim(),
+      constraintsText: String(body.constraintsText || "").trim(),
+      starterCode,
+      isOpen: body.isOpen !== false,
+      tests: normalizedTests
+    }
+  };
+}
+
+function normalizeTestCase(testCase, index, errors) {
+  const visibility = testCase?.visibility === "hidden" ? "hidden" : "public";
+  const comparator = ["exact", "number", "deepNumber"].includes(testCase?.comparator)
+    ? testCase.comparator
+    : "exact";
+  const args = testCase?.args;
+  if (!Array.isArray(args)) {
+    errors.push(`第 ${index + 1} 筆測資 args 必須是陣列，代表要傳給函式的參數列表`);
+  }
+  if (!Object.prototype.hasOwnProperty.call(testCase || {}, "expected")) {
+    errors.push(`第 ${index + 1} 筆測資缺少 expected`);
+  }
+  return {
+    name: String(testCase?.name || `Case ${index + 1}`).trim(),
+    visibility,
+    args: Array.isArray(args) ? args : [],
+    expected: testCase?.expected,
+    comparator,
+    points: Number.isInteger(Number(testCase?.points)) && Number(testCase.points) > 0
+      ? Number(testCase.points)
+      : 1
+  };
+}
+
+function slugify(value) {
+  const slug = String(value)
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return slug || `problem-${Date.now()}`;
+}
+
+function uniqueSlug(base) {
+  let next = base;
+  let suffix = 2;
+  while (db.prepare("SELECT id FROM problems WHERE slug = ?").get(next)) {
+    next = `${base}-${suffix}`;
+    suffix += 1;
+  }
+  return next;
 }
 
 function buildRunnableTestCases(problemId, sampleCases) {
@@ -650,7 +838,7 @@ function buildGlobalLeaderboard() {
   const students = db
     .prepare("SELECT id, name, student_id FROM users WHERE role = 'student' ORDER BY name, id")
     .all();
-  const problems = db.prepare("SELECT id FROM problems ORDER BY week, id").all();
+  const problems = db.prepare("SELECT id FROM problems WHERE is_open = 1 ORDER BY week, id").all();
   const submissions = db
     .prepare(
       `SELECT user_id, problem_id, score, passed, runtime_ms, created_at

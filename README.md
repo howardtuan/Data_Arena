@@ -1,18 +1,22 @@
 # DataArena
 
-DataArena 是依據專案計畫書實作的資料競賽平台。平台包含學生註冊登入、教師管理員登入、1-10 週正式題庫、Python 程式批改、全站排行榜、學生進度與教師後台。
-<img width="1469" height="890" alt="image" src="https://github.com/user-attachments/assets/2a8d0bc6-92d7-4a05-a57d-61175e6f6e24" />
-
+DataArena 是一個 LeetCode 風格的 Python 題目練習平台。學生可以登入、選題、開始限時作答、執行公開範例測資、正式 Submit；老師可以開放/關閉題目，也可以在後台上傳新題目與測資。
+![首頁](image.png)
+![example](image-1.png)
 ## 預設帳號
 
-教師管理員：
+老師帳號：
 
 - Email: `admin@dataarena.local`
 - Password: `DataArena@2026!`
 
-學生帳號由學生在首頁自行註冊。重置資料庫後會回到正式初始狀態：管理員 1 位、學生 0 位、提交紀錄 0 筆、作答紀錄 0 筆、題目 50 題。
+範例學生帳號：
 
-## 本機啟動
+- Email: `student@dataarena.local`
+- Password: `Student@2026!`
+- Student ID: `SAMPLE001`
+
+## 啟動
 
 ```bash
 corepack pnpm install
@@ -20,22 +24,149 @@ corepack pnpm build
 corepack pnpm start
 ```
 
-預設服務網址為 `http://localhost:8080`。
+預設網址：`http://localhost:8080`
 
-如需使用其他連接埠：
+開發模式：
 
 ```bash
-$env:PORT=8090
-corepack pnpm start
+corepack pnpm dev
+corepack pnpm dev:api
 ```
 
-## 重置正式初始資料
+如果前端與 API 分開跑，請設定：
 
-重置會清空學生、提交紀錄與本機 SQLite 資料庫，然後重新建立管理員帳號與 50 題正式題庫。
+```bash
+$env:VITE_API_BASE_URL="http://localhost:8080"
+```
+
+重建資料庫與 seed：
 
 ```bash
 corepack pnpm reset-db
 ```
+
+## 老師如何開放/關閉題目
+
+1. 使用老師帳號登入。
+2. 進入「老師後台」。
+3. 在「題目管理」分頁中，每題都有「關閉題目」或「開放題目」按鈕。
+4. 預設所有 seed 題目與新上傳題目都是開放。
+5. 題目被關閉後，學生的 Problem List、題目詳情、Progress 與 Leaderboard 都不會再使用該題。
+6. 老師仍可在後台看到關閉題目，並可重新開放。
+
+## 老師如何上傳題目
+
+1. 登入老師帳號。
+2. 進入「老師後台」。
+3. 切換到「上傳題目」分頁。
+4. 可先按「載入 Two Sum 範例」查看完整格式。
+5. 填寫題目基本資料、函式名稱、參數、題目敘述、Starter Code 與測資 JSON。
+6. 按「上傳題目」。
+7. 上傳後建議到 Problem List 選新題目，用老師帳號 Start、Run、Submit 一次，確認 public 與 hidden 測資都正確。
+
+## 欄位說明
+
+- `Slug`: 題目網址識別字，例如 `two-sum-demo`。可留空讓系統根據標題產生。
+- `週次`: 題目所屬週次，必須是 1 到 99。
+- `單元名稱`: 顯示用分類，例如 `Array Warmup`。
+- `題目標題`: 顯示給學生的題名。
+- `難度`: Easy、Medium、Hard，分別對應 1、2、3。
+- `分類`: 題目標籤，例如 `Array / Hash Table`。
+- `時間限制秒數`: 作答倒數時間，60 到 7200 秒。
+- `函式名稱`: 學生必須實作的 Python 函式名稱，例如 `two_sum`。
+- `參數 signature`: 以逗號分隔，例如 `nums, target`。
+- `Starter Code / 範例 func`: 學生編輯器預設載入的 Python 程式。
+- `測資 JSON`: public 與 hidden 測資陣列。
+- `上傳後立即開放給學生`: 預設勾選；取消後學生不會看到該題。
+
+## Starter Code 範例
+
+```python
+def two_sum(nums, target):
+    seen = {}
+    for index, value in enumerate(nums):
+        need = target - value
+        if need in seen:
+            return [seen[need], index]
+        seen[value] = index
+    return []
+```
+
+最小可用模板：
+
+```python
+def two_sum(nums, target):
+    # TODO: write your solution
+    pass
+```
+
+函式名稱必須和「函式名稱」欄位一致；參數也要和 signature 一致。
+
+## 測資 JSON 寫法
+
+測資最外層必須是陣列。每筆測資需要：
+
+- `name`: 測資名稱。
+- `visibility`: `public` 或 `hidden`。
+- `args`: 傳給函式的參數陣列。
+- `expected`: 預期回傳值。
+- `comparator`: `exact`、`number` 或 `deepNumber`。
+
+範例：
+
+```json
+[
+  {
+    "name": "Sample 1",
+    "visibility": "public",
+    "args": [[2, 7, 11, 15], 9],
+    "expected": [0, 1],
+    "comparator": "exact"
+  },
+  {
+    "name": "Hidden 1",
+    "visibility": "hidden",
+    "args": [[3, 3], 6],
+    "expected": [0, 1],
+    "comparator": "exact"
+  }
+]
+```
+
+重點：`args` 是外層參數陣列。若函式是：
+
+```python
+def two_sum(nums, target):
+    ...
+```
+
+那系統會執行：
+
+```python
+two_sum(*args)
+```
+
+所以 `args` 要寫成：
+
+```json
+[[2, 7, 11, 15], 9]
+```
+
+不是：
+
+```json
+{"nums": [2, 7, 11, 15], "target": 9}
+```
+
+## Comparator 說明
+
+- `exact`: 用 `JSON.stringify` 後的結構比較，適合字串、整數、陣列、dict。
+- `number`: 適合單一浮點數，允許 `0.0001` 誤差。
+- `deepNumber`: 適合陣列或 dict 裡面含浮點數，也允許 `0.0001` 誤差。
+
+## Hidden 測資
+
+`hidden` 測資只會在正式 Submit 時執行。學生只會看到該 hidden case 是否通過與錯誤訊息，不會看到 hidden 的 input、expected 或 actual。
 
 ## Docker
 
@@ -43,81 +174,4 @@ corepack pnpm reset-db
 docker compose up --build
 ```
 
-Docker 啟動後開啟 `http://localhost:8080`。SQLite 資料會保存在 Docker volume `data-arena-data`。
-
-正式上線前請在 `docker-compose.yml` 更換 `JWT_SECRET`，必要時也可調整 `ADMIN_EMAIL` 與 `ADMIN_PASSWORD`。
-
-## 復刻流程
-
-在一台新機器上復刻同樣平台：
-
-1. 安裝 Node.js 22、pnpm/corepack、Python 3。若使用 Docker，只需要 Docker Desktop 或 Docker Engine。
-2. 取得專案資料夾後，在專案根目錄執行 `corepack enable`。
-3. 本機模式執行：
-
-```bash
-corepack pnpm install
-corepack pnpm reset-db
-corepack pnpm build
-corepack pnpm start
-```
-
-4. Docker 模式執行：
-
-```bash
-docker compose down -v
-docker compose up --build -d
-```
-
-5. 開啟 `http://localhost:8080`，用預設管理員帳號登入後台確認題目 50 題、學生 0 位、Submit 0 筆、作答紀錄 0 筆。
-
-重要檔案：
-
-- `server/problem-bank.mjs`：50 題正式題庫與公開測資。
-- `server/db.mjs`：SQLite schema、管理員 seed、題庫 seed、資料庫重置。
-- `server/index.mjs`：登入、題目、Test、Submit、作答限制、切換視窗紀錄、排行榜 API。
-- `src/App.tsx`：前端主流程、使用教學頁、編輯器、sample 編輯、排行榜與警告彈窗。
-- `src/styles.css`：前端版面與響應式樣式。
-- `Dockerfile` / `docker-compose.yml`：容器化部署。
-
-## 題庫與測資規則
-
-題庫共 50 題：第 1-10 週，每週 5 題。題目涵蓋資料清理、統計、排序、分類、模型指標、特徵工程與競賽常見資料處理。
-
-題目頁只顯示 sample 測資。平台沒有隱藏測資；Submit 會用該題全部公開測資批改。若提交錯誤，結果會列出失敗的測資、Input、Expected、Actual 與錯誤訊息。
-
-作答前必須按「開始」。開始後才可編輯程式碼、sample input 與 expected output，並開始倒數計時。測驗進行中會鎖定所有與本題無關的按鈕與連結，包括頂部導覽、題目切換、排行榜、進度、後台與登出；學生只能操作本題的 sample、編輯器、Test、Submit 與警告視窗。離開題目或逾時會留下作答紀錄。Test 不限次數，會使用目前畫面上的 sample input / expected output 測試；Submit 才計入正式提交次數，每位學生每題每天最多 3 次，午夜重置。
-
-測驗中禁止切換視窗或分頁。系統偵測到切換時會跳出警告並記錄次數；第 1、2 次是警告，第 3 次會自動強制 Submit 目前程式碼，並計入今日 Submit 次數。
-
-程式編輯器支援 Tab 縮排、Python 語法高亮，並禁止複製、剪下、貼上與右鍵選單。
-
-網站上方的「使用教學」頁會提供學生作答流程、Test / Submit 差異、測驗中限制說明，以及 Week 1 五題範例題目的參考答案。
-
-## 全站排行榜
-
-排行榜是針對全部題目的總榜，不是單題排行榜。每題先計算題目分：
-
-```text
-最佳通過率 70% + 時間效率 15% + Submit 次數效率 10% + 失敗次數效率 5%
-```
-
-平台會先依每題的題目分排序得到該題排名，再把全部題目的排名取平均，形成「平均題目排名」。平均題目排名越小，總榜越前面；未提交的題目會排在該題最後。
-
-若平均題目排名相同，依序比較解題數、平均題目分、總執行時間、總 Submit 次數、總失敗次數。學生可在排行榜頁點「排名說明」查看同樣的規則。
-
-## 開發模式
-
-前端 Vite：
-
-```bash
-corepack pnpm dev
-```
-
-後端 API：
-
-```bash
-corepack pnpm dev:api
-```
-
-前端開發時若 API 不是同源服務，可使用 `VITE_API_BASE_URL` 指向 API 網址。
+Docker 預設也使用 `http://localhost:8080`，SQLite 資料放在 volume `data-arena-data`。

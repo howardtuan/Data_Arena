@@ -1,0 +1,6 @@
+node_modules/
+data/*.sqlite-shm
+data/*.sqlite-wal
+tmp/*.sqlite
+tmp/*.sqlite-shm
+tmp/*.sqlite-wal

@@ -1,8 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ClipboardEvent, FormEvent, KeyboardEvent, UIEvent } from "react";
+import type {
+  FormEvent,
+  KeyboardEvent as ReactKeyboardEvent,
+  PointerEvent as ReactPointerEvent,
+  UIEvent
+} from "react";
 
-type View = "problems" | "tutorial" | "leaderboard" | "progress" | "teacher";
+type View = "problems" | "workspace" | "auth" | "tutorial" | "leaderboard" | "progress" | "teacher";
 type AuthMode = "login" | "register";
+type DifficultyFilter = "all" | "1" | "2" | "3";
 
 type User = {
   id: number;
@@ -79,7 +85,7 @@ type Submission = {
 type TestDetail = {
   id: number;
   name: string;
-  visibility: "public";
+  visibility: "public" | "hidden";
   passed: boolean;
   args?: unknown[];
   expected?: unknown;
@@ -123,21 +129,11 @@ type Dashboard = {
   counts: {
     students: number;
     problems: number;
+    openProblems?: number;
     submissions: number;
     attempts?: number;
     passedSubmissions: number;
   };
-  weekStats: Array<{ week: number; problems: number; submissions: number; average_score: number | null }>;
-  recentSubmissions: Array<{
-    id: number;
-    score: number;
-    passed: number;
-    created_at: string;
-    name: string;
-    student_id: string;
-    title: string;
-    week: number;
-  }>;
 };
 
 type SampleCasePayload = {
@@ -148,110 +144,97 @@ type SampleCasePayload = {
   comparator?: string;
 };
 
+type ProblemForm = {
+  slug: string;
+  week: string;
+  seriesTitle: string;
+  title: string;
+  difficulty: string;
+  category: string;
+  timeLimitSeconds: string;
+  functionName: string;
+  signature: string;
+  statement: string;
+  inputFormat: string;
+  outputFormat: string;
+  constraintsText: string;
+  starterCode: string;
+  testsText: string;
+  isOpen: boolean;
+};
+
+type ProgressRow = {
+  id: number;
+  slug: string;
+  title: string;
+  week: number;
+  submissions: number;
+  best_score: number | null;
+  last_submission: string | null;
+};
+
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
 const TOKEN_KEY = "dataarena_token";
+
 const PYTHON_KEYWORDS = new Set([
   "False", "None", "True", "and", "as", "assert", "async", "await", "break", "class",
   "continue", "def", "del", "elif", "else", "except", "finally", "for", "from",
   "global", "if", "import", "in", "is", "lambda", "nonlocal", "not", "or", "pass",
   "raise", "return", "try", "while", "with", "yield"
 ]);
+
 const PYTHON_BUILTINS = new Set([
   "abs", "all", "any", "bool", "dict", "enumerate", "filter", "float", "int", "len",
   "list", "map", "max", "min", "print", "range", "reversed", "round", "set", "sorted",
   "str", "sum", "tuple", "zip"
 ]);
 
-const TUTORIAL_STEPS = [
-  {
-    title: "註冊或登入",
-    body: "學生先用姓名、學號、Email 與密碼註冊。教師使用管理員帳號登入後台管理題目開放狀態。"
-  },
-  {
-    title: "選題後按開始",
-    body: "題目可以先閱讀，但必須按下開始作答後，編輯器、Sample Input 與 Expected 才會解鎖並開始倒數。"
-  },
-  {
-    title: "先用 Test 驗證 sample",
-    body: "Test 不限次數，使用畫面上可自行修改的 sample 測資，不會消耗每日 Submit 次數。"
-  },
-  {
-    title: "Submit 才列入正式紀錄",
-    body: "Submit 會使用該題全部公開測資批改。每位學生每題每天最多 3 次，午夜自動重置。"
-  },
-  {
-    title: "測驗中留在本題",
-    body: "開始後會鎖定導覽、題目切換與登出。切換視窗或分頁會警告，超過 2 次會強制送出目前程式碼。"
-  },
-  {
-    title: "查看總排行榜",
-    body: "排行榜以全部題目的平均題目排名計算，會綜合通過率、時間、Submit 次數與失敗次數。"
-  }
-];
-
-const TUTORIAL_SOLUTIONS = [
-  {
-    title: "Week 1-1 整理成績型別",
-    functionName: "normalize_scores(records)",
-    note: "複製每筆資料，將可轉換的 score 轉成整數；空值與錯誤值設為 0。",
-    code: `def normalize_scores(records):
-    result = []
-    for row in records:
-        new_row = dict(row)
-        value = new_row.get("score")
-        try:
-            new_row["score"] = int(float(value))
-        except (TypeError, ValueError):
-            new_row["score"] = 0
-        result.append(new_row)
-    return result`
-  },
-  {
-    title: "Week 1-2 找出最高分學生",
-    functionName: "top_student(records)",
-    note: "用目前最佳資料列逐筆比較，遇到同分不更新，就會保留較早出現者。",
-    code: `def top_student(records):
-    best = records[0]
-    for row in records[1:]:
-        if row["score"] > best["score"]:
-            best = row
-    return best["name"]`
-  },
-  {
-    title: "Week 1-3 擷取欄位有效值",
-    functionName: "column_values(records, column)",
-    note: "缺欄位、None 與空字串都略過，其餘值保留原順序。",
-    code: `def column_values(records, column):
-    values = []
-    for row in records:
-        value = row.get(column)
-        if value is not None and value != "":
-            values.append(value)
-    return values`
-  },
-  {
-    title: "Week 1-4 建立通過標記",
-    functionName: "pass_flags(scores, threshold)",
-    note: "逐一判斷分數是否大於等於門檻，回傳布林值清單。",
-    code: `def pass_flags(scores, threshold):
-    return [score >= threshold for score in scores]`
-  },
-  {
-    title: "Week 1-5 依班級分組名單",
-    functionName: "group_names_by_class(records)",
-    note: "先依班級收集姓名，再依班級與姓名字典序排序。",
-    code: `def group_names_by_class(records):
-    groups = {}
-    for row in records:
-        class_name = row["class"]
-        groups.setdefault(class_name, []).append(row["name"])
-
-    result = {}
-    for class_name in sorted(groups):
-        result[class_name] = sorted(groups[class_name])
-    return result`
-  }
-];
+const DEFAULT_PROBLEM_FORM: ProblemForm = {
+  slug: "normalize-scores-template",
+  week: "1",
+  seriesTitle: "Introduction / Pandas 操作入門",
+  title: "整理成績型別",
+  difficulty: "1",
+  category: "Python / Pandas 基礎",
+  timeLimitSeconds: "1800",
+  functionName: "normalize_scores",
+  signature: "records",
+  statement:
+    "給定學生資料列，將每筆資料的 score 轉成整數；空字串、None、缺少 score 或無法轉換的值都視為 0。回傳新 list，並保持原本順序與其他欄位。",
+  inputFormat: "records: list[dict]。因為 signature 只有 records，所以測資 args 要寫成 [records]，例如 [[{\"name\":\"Amy\",\"score\":\"91\"},{\"name\":\"Ben\",\"score\":null}]]。",
+  outputFormat: "list[dict]。每筆資料的 score 必須是 int，其他欄位需要原樣保留。",
+  constraintsText: "不要改變資料列順序。\n不要移除 name、class 等其他欄位。\nscore 為空字串、None、缺少欄位或無法轉成數字時，一律輸出 0。",
+  starterCode:
+    "def normalize_scores(records):\n    cleaned = []\n    for record in records:\n        next_record = dict(record)\n        try:\n            next_record[\"score\"] = int(float(next_record.get(\"score\", 0) or 0))\n        except (TypeError, ValueError):\n            next_record[\"score\"] = 0\n        cleaned.append(next_record)\n    return cleaned\n",
+  testsText: JSON.stringify(
+    [
+      {
+        name: "Sample 1",
+        visibility: "public",
+        args: [[{ name: "Amy", score: "91" }, { name: "Ben", score: null }]],
+        expected: [{ name: "Amy", score: 91 }, { name: "Ben", score: 0 }],
+        comparator: "exact"
+      },
+      {
+        name: "Sample 2",
+        visibility: "public",
+        args: [[{ name: "Cara", score: "bad", class: "A" }]],
+        expected: [{ name: "Cara", score: 0, class: "A" }],
+        comparator: "exact"
+      },
+      {
+        name: "Hidden 1",
+        visibility: "hidden",
+        args: [[{ name: "Dan", score: 88 }, { name: "Eva", score: "" }]],
+        expected: [{ name: "Dan", score: 88 }, { name: "Eva", score: 0 }],
+        comparator: "exact"
+      }
+    ],
+    null,
+    2
+  ),
+  isOpen: true
+};
 
 function App() {
   const [view, setView] = useState<View>("problems");
@@ -268,14 +251,21 @@ function App() {
   const [code, setCode] = useState("");
   const [sampleInputs, setSampleInputs] = useState<Record<number, string>>({});
   const [sampleOutputs, setSampleOutputs] = useState<Record<number, string>>({});
+  const [activeCaseId, setActiveCaseId] = useState<number | null>(null);
   const [runResult, setRunResult] = useState<GradeResult | null>(null);
-  const [progress, setProgress] = useState<unknown[]>([]);
+  const [progress, setProgress] = useState<ProgressRow[]>([]);
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
   const [adminProblems, setAdminProblems] = useState<Problem[]>([]);
+  const [uploadForm, setUploadForm] = useState<ProblemForm>(DEFAULT_PROBLEM_FORM);
   const [authForm, setAuthForm] = useState({ name: "", studentId: "", email: "", password: "" });
   const [status, setStatus] = useState("");
   const [focusWarning, setFocusWarning] = useState("");
   const [loading, setLoading] = useState(false);
+  const [search, setSearch] = useState("");
+  const [difficultyFilter, setDifficultyFilter] = useState<DifficultyFilter>("all");
+  const [workspaceSplit, setWorkspaceSplit] = useState(43);
+  const [testSplit, setTestSplit] = useState(64);
+
   const timeoutInFlight = useRef(false);
   const focusViolationInFlight = useRef(false);
   const lastFocusViolationAt = useRef(0);
@@ -284,15 +274,7 @@ function App() {
   const activeAttempt = attemptState?.activeAttempt ?? null;
   const canEdit = Boolean(activeAttempt && activeAttempt.status === "active" && remainingMs > 0);
   const canSubmit = canEdit && Boolean(attemptState?.canSubmit);
-  const isAttemptLocked = canEdit;
-
-  const groupedProblems = useMemo(() => {
-    const groups = new Map<number, Problem[]>();
-    for (const problem of problems) {
-      groups.set(problem.week, [...(groups.get(problem.week) || []), problem]);
-    }
-    return [...groups.entries()].sort(([a], [b]) => a - b);
-  }, [problems]);
+  const selectedIndex = problems.findIndex((problem) => problem.slug === selectedSlug);
 
   useEffect(() => {
     void bootstrap();
@@ -300,6 +282,7 @@ function App() {
 
   useEffect(() => {
     if (selectedSlug) void loadProblem(selectedSlug);
+    else setSelectedProblem(null);
   }, [selectedSlug, token]);
 
   useEffect(() => {
@@ -307,6 +290,15 @@ function App() {
     if (view === "progress" && token) void loadProgress();
     if (view === "teacher" && user?.role === "admin") void loadAdmin();
   }, [view, token, user]);
+
+  useEffect(() => {
+    const tests = selectedProblem?.publicTests || [];
+    if (!tests.length) {
+      setActiveCaseId(null);
+      return;
+    }
+    setActiveCaseId((current) => (current && tests.some((test) => test.id === current) ? current : tests[0].id));
+  }, [selectedProblem?.id]);
 
   useEffect(() => {
     const attempt = attemptState?.activeAttempt;
@@ -339,14 +331,14 @@ function App() {
   }, [attemptState?.activeAttempt?.id, token]);
 
   useEffect(() => {
-    if (!isAttemptLocked) return;
+    if (!canEdit) return;
     const handleBeforeUnload = (event: BeforeUnloadEvent) => {
       event.preventDefault();
       event.returnValue = "";
     };
     window.addEventListener("beforeunload", handleBeforeUnload);
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
-  }, [isAttemptLocked]);
+  }, [canEdit]);
 
   useEffect(() => {
     const attempt = attemptState?.activeAttempt;
@@ -358,6 +350,7 @@ function App() {
       lastFocusViolationAt.current = now;
       void reportFocusViolation(attempt.id);
     };
+
     const handleVisibilityChange = () => {
       if (document.hidden) report();
     };
@@ -386,6 +379,7 @@ function App() {
           usableToken = "";
         }
       }
+
       const [problemResponse, leaderboardResponse] = await Promise.all([
         api<{ problems: Problem[] }>("/api/problems", {}, usableToken),
         api<{ leaderboard: LeaderboardEntry[]; explanation: LeaderboardExplanation }>("/api/leaderboard")
@@ -393,7 +387,10 @@ function App() {
       setProblems(problemResponse.problems);
       setLeaderboard(leaderboardResponse.leaderboard);
       setLeaderboardExplanation(leaderboardResponse.explanation);
-      setSelectedSlug((current) => current || problemResponse.problems[0]?.slug || "");
+      setSelectedSlug((current) => {
+        if (problemResponse.problems.some((problem) => problem.slug === current)) return current;
+        return problemResponse.problems[0]?.slug || "";
+      });
     } catch (error) {
       setStatus(readError(error));
     } finally {
@@ -402,15 +399,21 @@ function App() {
   }
 
   async function loadProblem(slug: string) {
-    const response = await api<{ problem: Problem }>(`/api/problems/${slug}`, {}, token);
-    setSelectedProblem(response.problem);
-    setCode(response.problem.starterCode);
-    setRunResult(null);
-    setFocusWarning("");
-    setSampleInputs(Object.fromEntries((response.problem.publicTests || []).map((test) => [test.id, prettyJson(test.args)])));
-    setSampleOutputs(Object.fromEntries((response.problem.publicTests || []).map((test) => [test.id, prettyJson(test.expected)])));
-    if (token) await loadAttemptState(slug);
-    else setAttemptState(null);
+    try {
+      const response = await api<{ problem: Problem }>(`/api/problems/${slug}`, {}, token);
+      setSelectedProblem(response.problem);
+      setCode(response.problem.starterCode);
+      setRunResult(null);
+      setFocusWarning("");
+      setSampleInputs(Object.fromEntries((response.problem.publicTests || []).map((test) => [test.id, prettyJson(test.args)])));
+      setSampleOutputs(Object.fromEntries((response.problem.publicTests || []).map((test) => [test.id, prettyJson(test.expected)])));
+      if (token) await loadAttemptState(slug);
+      else setAttemptState(null);
+    } catch (error) {
+      setSelectedProblem(null);
+      setAttemptState(null);
+      setStatus(readError(error));
+    }
   }
 
   async function loadAttemptState(slug = selectedSlug) {
@@ -429,7 +432,7 @@ function App() {
   }
 
   async function loadProgress() {
-    const response = await api<{ progress: unknown[] }>("/api/me/progress", {}, token);
+    const response = await api<{ progress: ProgressRow[] }>("/api/me/progress", {}, token);
     setProgress(response.progress);
   }
 
@@ -448,7 +451,9 @@ function App() {
     setLoading(true);
     try {
       const path = authMode === "login" ? "/api/auth/login" : "/api/auth/register";
-      const body = authMode === "login" ? { email: authForm.email, password: authForm.password } : authForm;
+      const body = authMode === "login"
+        ? { email: authForm.email, password: authForm.password }
+        : authForm;
       const response = await api<{ user: User; token: string }>(path, {
         method: "POST",
         body: JSON.stringify(body)
@@ -456,9 +461,12 @@ function App() {
       localStorage.setItem(TOKEN_KEY, response.token);
       setToken(response.token);
       setUser(response.user);
-      setStatus(`${response.user.name} 已登入`);
+      setStatus(`已登入：${response.user.name}`);
+
       const problemResponse = await api<{ problems: Problem[] }>("/api/problems", {}, response.token);
       setProblems(problemResponse.problems);
+      setSelectedSlug((current) => current || problemResponse.problems[0]?.slug || "");
+      setView(response.user.role === "admin" ? "teacher" : "problems");
     } catch (error) {
       setStatus(readError(error));
     } finally {
@@ -466,9 +474,9 @@ function App() {
     }
   }
 
-  async function logout(showMessage = true) {
-    if (isAttemptLocked) {
-      setStatus("測驗進行中，請先 Submit 或等時間結束，期間不能登出或離開本題。");
+  async function logout() {
+    if (canEdit) {
+      setStatus("作答中不能登出。請先 Submit 或等待本次作答結束。");
       return;
     }
     await abandonActiveAttempt();
@@ -478,13 +486,53 @@ function App() {
     setAttemptState(null);
     setProgress([]);
     setDashboard(null);
-    if (showMessage) setStatus("已登出");
+    setView("problems");
+    setStatus("已登出");
+
+    const [problemResponse, leaderboardResponse] = await Promise.all([
+      api<{ problems: Problem[] }>("/api/problems"),
+      api<{ leaderboard: LeaderboardEntry[]; explanation: LeaderboardExplanation }>("/api/leaderboard")
+    ]);
+    setProblems(problemResponse.problems);
+    setLeaderboard(leaderboardResponse.leaderboard);
+    setLeaderboardExplanation(leaderboardResponse.explanation);
+    setSelectedSlug((current) => {
+      if (problemResponse.problems.some((problem) => problem.slug === current)) return current;
+      return problemResponse.problems[0]?.slug || "";
+    });
+  }
+
+  function openAuth(mode: AuthMode) {
+    setAuthMode(mode);
+    setStatus("");
+    setView("auth");
+  }
+
+  function openProblem(slug: string) {
+    setSelectedSlug(slug);
+    setStatus("");
+    setView("workspace");
+  }
+
+  function goView(nextView: View) {
+    if (nextView === "progress" && !token) {
+      openAuth("login");
+      setStatus("請先登入後查看 Progress。");
+      return;
+    }
+    if (nextView === "teacher" && user?.role !== "admin") {
+      setStatus("只有老師帳號可以進入 Teacher。");
+      return;
+    }
+    setStatus("");
+    setView(nextView);
   }
 
   async function startAttempt() {
     if (!selectedProblem) return;
     if (!token) {
-      setStatus("請先註冊或登入學生帳號");
+      openAuth("login");
+      setStatus("請先登入後開始作答。");
       return;
     }
     setLoading(true);
@@ -501,7 +549,62 @@ function App() {
       setAttemptState(response.attemptState);
       setRemainingMs(Math.max(0, new Date(response.attempt.expiresAt).getTime() - Date.now()));
       setRunResult(null);
-      setStatus("已開始作答。Test 不限次數，Submit 每題每天最多 3 次。");
+      setStatus("已開始作答。Run 只測公開測資，Submit 會送出公開與隱藏測資。");
+    } catch (error) {
+      setStatus(readError(error));
+      if (isApiError(error) && error.attemptState) setAttemptState(error.attemptState);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function runCode() {
+    if (!selectedProblem) return;
+    if (!canEdit) {
+      setStatus("請先按 Start 開始作答，才能 Run。");
+      return;
+    }
+    setLoading(true);
+    setStatus("");
+    try {
+      const response = await api<{ result: GradeResult; attempt: Attempt }>(
+        `/api/problems/${selectedProblem.slug}/run`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            code,
+            sampleCases: buildSampleCases(selectedProblem, sampleInputs, sampleOutputs)
+          })
+        },
+        token
+      );
+      setRunResult(response.result);
+      setStatus(response.result.passed ? "Run 通過公開測資。" : "Run 未通過，請查看 Test Result。");
+    } catch (error) {
+      setStatus(readError(error));
+      if (isApiError(error) && error.attemptState) setAttemptState(error.attemptState);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function submitCode(force = false) {
+    if (!selectedProblem) return;
+    if (!force && !canSubmit) {
+      setStatus("請先 Start，且本題今日仍有 Submit 次數時才能送出。");
+      return;
+    }
+    setLoading(true);
+    setStatus("");
+    try {
+      const response = await api<{ result: GradeResult; submission: Submission; attempt: Attempt }>(
+        `/api/problems/${selectedProblem.slug}/submit`,
+        { method: "POST", body: JSON.stringify({ code }) },
+        token
+      );
+      setRunResult(response.result);
+      setStatus(response.result.passed ? "Submit Accepted。" : "Submit 已送出，但尚未通過全部測資。");
+      await Promise.all([loadAttemptState(), bootstrap()]);
     } catch (error) {
       setStatus(readError(error));
       if (isApiError(error) && error.attemptState) setAttemptState(error.attemptState);
@@ -520,7 +623,7 @@ function App() {
         token
       );
       setAttemptState((current) => current ? { ...current, activeAttempt: null, canStart: true } : current);
-      if (showMessage) setStatus("已記錄本次離開作答");
+      if (showMessage) setStatus("已放棄本次作答。");
     } catch {
       // Navigation cleanup should not block the user.
     }
@@ -529,7 +632,7 @@ function App() {
   async function markAttemptTimedOut(attemptId: number) {
     try {
       await api<{ attempt: Attempt }>(`/api/attempts/${attemptId}/timeout`, { method: "POST", body: JSON.stringify({}) }, token);
-      setStatus("作答時間已到，本次作答已記錄為逾時。你可以重新開始作答，Submit 次數不會因逾時消耗。");
+      setStatus("作答時間已結束。");
       await loadAttemptState();
     } catch (error) {
       setStatus(readError(error));
@@ -552,13 +655,15 @@ function App() {
       );
       setAttemptState(response.attemptState);
       if (response.shouldForceSubmit) {
-        const message = `偵測到切換視窗 ${response.violationCount} 次，已超過 ${response.maxWarnings} 次警告，系統正在強制送出。`;
+        const message = `離開作答畫面 ${response.violationCount} 次，系統將自動 Submit。`;
         setFocusWarning(message);
         setStatus(message);
-        await forceSubmitActiveAttempt(attemptId);
+        forceSubmitInFlight.current = true;
+        await submitCode(true);
+        forceSubmitInFlight.current = false;
         return;
       }
-      const message = `警告：測驗中禁止切換視窗。已偵測 ${response.violationCount}/${response.maxWarnings} 次，超過 ${response.maxWarnings} 次會強制送出。`;
+      const message = `請勿離開作答畫面：${response.violationCount}/${response.maxWarnings}`;
       setFocusWarning(message);
       setStatus(message);
     } catch (error) {
@@ -568,685 +673,746 @@ function App() {
     }
   }
 
-  async function forceSubmitActiveAttempt(attemptId: number) {
-    if (!selectedProblem || !token || forceSubmitInFlight.current) return;
-    forceSubmitInFlight.current = true;
+  async function toggleProblemOpen(problem: Problem) {
     setLoading(true);
-    try {
-      const response = await api<{ result: GradeResult; submission?: Submission; attempt?: Attempt }>(
-        `/api/problems/${selectedProblem.slug}/submit`,
-        { method: "POST", body: JSON.stringify({ code, attemptId }) },
-        token
-      );
-      setRunResult(response.result);
-      setStatus(response.result.passed ? "切換視窗超過限制，系統已強制送出並通過。" : "切換視窗超過限制，系統已強制送出並計入今日 Submit。");
-      await Promise.all([loadLeaderboard(), loadAttemptState(selectedProblem.slug), bootstrap()]);
-    } catch (error) {
-      setStatus(readError(error));
-      if (isApiError(error) && error.attemptState) setAttemptState(error.attemptState);
-    } finally {
-      forceSubmitInFlight.current = false;
-      setLoading(false);
-    }
-  }
-
-  async function runCode(isSubmit: boolean) {
-    if (!selectedProblem) return;
-    if (!token) {
-      setStatus("請先註冊或登入學生帳號");
-      return;
-    }
-    if (!activeAttempt) {
-      setStatus("請先按開始作答，開始後才可編輯與執行");
-      return;
-    }
-    if (isSubmit && !attemptState?.canSubmit) {
-      setStatus("今日本題 Submit 次數已用完，請等午夜重置");
-      return;
-    }
     setStatus("");
-    setLoading(true);
     try {
-      const path = isSubmit ? "submit" : "run";
-      const body = isSubmit
-        ? { code, attemptId: activeAttempt.id }
-        : { code, attemptId: activeAttempt.id, sampleCases: buildSampleCases(selectedProblem, sampleInputs, sampleOutputs) };
-      const response = await api<{ result: GradeResult; submission?: Submission; attempt?: Attempt }>(
-        `/api/problems/${selectedProblem.slug}/${path}`,
-        { method: "POST", body: JSON.stringify(body) },
+      await api<{ problem: Problem }>(
+        `/api/admin/problems/${problem.id}`,
+        { method: "PATCH", body: JSON.stringify({ isOpen: !problem.isOpen }) },
         token
       );
-      setRunResult(response.result);
-      if (isSubmit) {
-        setStatus(response.result.passed ? "提交通過" : "提交未通過，本次 Submit 已計入今日次數");
-        await Promise.all([loadLeaderboard(), loadAttemptState(selectedProblem.slug), bootstrap()]);
-      }
+      setStatus(!problem.isOpen ? "題目已開放給學生。" : "題目已關閉，學生列表不會再看到。");
+      await Promise.all([loadAdmin(), bootstrap()]);
     } catch (error) {
       setStatus(readError(error));
-      if (isApiError(error) && error.attemptState) setAttemptState(error.attemptState);
     } finally {
       setLoading(false);
     }
   }
 
-  async function toggleProblem(problem: Problem) {
-    await api<{ problem: Problem }>(
-      `/api/admin/problems/${problem.id}`,
-      { method: "PATCH", body: JSON.stringify({ isOpen: !problem.isOpen }) },
-      token
-    );
-    await Promise.all([bootstrap(), loadAdmin()]);
-  }
-
-  async function navigate(nextView: View) {
-    if (isAttemptLocked && nextView !== view) {
-      setStatus("測驗進行中，不能切換頁面。請留在本題完成 Test 或 Submit。");
-      return;
+  async function createProblem(event: FormEvent) {
+    event.preventDefault();
+    setLoading(true);
+    setStatus("");
+    try {
+      const payload = problemFormToPayload(uploadForm);
+      const response = await api<{ problem: Problem }>(
+        "/api/admin/problems",
+        { method: "POST", body: JSON.stringify(payload) },
+        token
+      );
+      setStatus(`已建立題目：${displayProblemTitle(response.problem)}`);
+      setSelectedSlug(response.problem.slug);
+      await Promise.all([loadAdmin(), bootstrap()]);
+    } catch (error) {
+      setStatus(readError(error));
+    } finally {
+      setLoading(false);
     }
-    if (nextView !== "problems") await abandonActiveAttempt(true);
-    setView(nextView);
-  }
-
-  async function selectProblem(slug: string) {
-    if (slug === selectedSlug) return;
-    if (isAttemptLocked) {
-      setStatus("測驗進行中，不能切換題目。請完成本題 Submit 或等時間結束。");
-      return;
-    }
-    await abandonActiveAttempt(true);
-    setAttemptState(null);
-    setSelectedSlug(slug);
   }
 
   return (
     <div className="app">
-      <Header user={user} activeView={view} locked={isAttemptLocked} onNavigate={(next) => void navigate(next)} onLogout={() => void logout()} />
-      <main className="main-shell">
-        {status && <div className="notice">{status}</div>}
-        {focusWarning && <FocusWarningModal message={focusWarning} onClose={() => setFocusWarning("")} />}
-        {!user && (
-          <AuthPanel
+      <Topbar
+        view={view}
+        user={user}
+        onView={goView}
+        onAuth={openAuth}
+        onLogout={logout}
+      />
+
+      {status && <div className="notice" role="status">{status}</div>}
+
+      <main className={view === "workspace" ? "workspace-main" : "main-shell"}>
+        {view === "auth" && (
+          <AuthPage
             mode={authMode}
             form={authForm}
             loading={loading}
-            onModeChange={setAuthMode}
-            onFormChange={setAuthForm}
+            onMode={setAuthMode}
+            onForm={setAuthForm}
             onSubmit={handleAuth}
           />
         )}
+
         {view === "problems" && (
+          <ProblemListView
+            user={user}
+            problems={problems}
+            loading={loading}
+            search={search}
+            difficultyFilter={difficultyFilter}
+            onSearch={setSearch}
+            onDifficultyFilter={setDifficultyFilter}
+            onOpenProblem={openProblem}
+          />
+        )}
+
+        {view === "workspace" && (
           <ProblemWorkspace
-            problems={groupedProblems}
+            problem={selectedProblem}
+            problems={problems}
+            selectedIndex={selectedIndex}
             selectedSlug={selectedSlug}
-            selectedProblem={selectedProblem}
+            code={code}
+            sampleInputs={sampleInputs}
+            sampleOutputs={sampleOutputs}
+            activeCaseId={activeCaseId}
+            runResult={runResult}
             attemptState={attemptState}
             remainingMs={remainingMs}
             canEdit={canEdit}
             canSubmit={canSubmit}
-            locked={isAttemptLocked}
-            code={code}
-            sampleInputs={sampleInputs}
-            sampleOutputs={sampleOutputs}
-            result={runResult}
             loading={loading}
-            onSelectProblem={(slug) => void selectProblem(slug)}
+            workspaceSplit={workspaceSplit}
+            testSplit={testSplit}
+            onBack={() => goView("problems")}
+            onOpenProblem={openProblem}
             onCodeChange={setCode}
             onSampleInputChange={(id, value) => setSampleInputs((current) => ({ ...current, [id]: value }))}
             onSampleOutputChange={(id, value) => setSampleOutputs((current) => ({ ...current, [id]: value }))}
-            onStart={() => void startAttempt()}
-            onRun={() => void runCode(false)}
-            onSubmit={() => void runCode(true)}
-            onEditorBlocked={(message) => setStatus(message)}
+            onActiveCase={setActiveCaseId}
+            onStart={startAttempt}
+            onRun={runCode}
+            onSubmit={() => void submitCode(false)}
+            onWorkspaceSplit={setWorkspaceSplit}
+            onTestSplit={setTestSplit}
           />
         )}
-        {view === "tutorial" && (
-          <TutorialView />
-        )}
-        {view === "leaderboard" && (
-          <LeaderboardView leaderboard={leaderboard} explanation={leaderboardExplanation} />
-        )}
-        {view === "progress" && (
-          <ProgressView user={user} progress={progress} />
-        )}
+
+        {view === "tutorial" && <TutorialView />}
+        {view === "leaderboard" && <LeaderboardView leaderboard={leaderboard} explanation={leaderboardExplanation} />}
+        {view === "progress" && <ProgressView user={user} progress={progress} />}
         {view === "teacher" && (
-          <TeacherView user={user} dashboard={dashboard} problems={adminProblems} onToggleProblem={toggleProblem} />
+          <TeacherView
+            user={user}
+            dashboard={dashboard}
+            problems={adminProblems}
+            form={uploadForm}
+            loading={loading}
+            onToggleProblem={toggleProblemOpen}
+            onFormChange={setUploadForm}
+            onCreateProblem={createProblem}
+            onResetTemplate={() => setUploadForm(DEFAULT_PROBLEM_FORM)}
+          />
         )}
       </main>
-    </div>
-  );
-}
 
-function Header({
-  user,
-  activeView,
-  locked,
-  onNavigate,
-  onLogout
-}: {
-  user: User | null;
-  activeView: View;
-  locked: boolean;
-  onNavigate: (view: View) => void;
-  onLogout: () => void;
-}) {
-  const navItems: Array<{ id: View; label: string; adminOnly?: boolean; authOnly?: boolean }> = [
-    { id: "problems", label: "題庫" },
-    { id: "tutorial", label: "使用教學" },
-    { id: "leaderboard", label: "總排行榜" },
-    { id: "progress", label: "我的進度", authOnly: true },
-    { id: "teacher", label: "教師後台", adminOnly: true }
-  ];
-  return (
-    <header className="topbar">
-      <div className="topbar-inner">
-        <button className="brand" disabled={locked} title={locked ? "測驗中不能切換頁面" : undefined} onClick={() => onNavigate("problems")}>DataArena</button>
-        <nav className="nav" aria-label="主要導覽">
-          {navItems
-            .filter((item) => !item.adminOnly || user?.role === "admin")
-            .filter((item) => !item.authOnly || user)
-            .map((item) => (
-              <button
-                key={item.id}
-                className={activeView === item.id ? "nav-link active" : "nav-link"}
-                disabled={locked}
-                title={locked ? "測驗中不能切換頁面" : undefined}
-                onClick={() => onNavigate(item.id)}
-              >
-                {item.label}
-              </button>
-            ))}
-        </nav>
-        <div className="teacher-area">
-          {user ? (
-            <>
-              <span className="user-chip">{user.role === "admin" ? "管理員" : "學生"}：{user.name}</span>
-              <button className="secondary-button compact" disabled={locked} title={locked ? "測驗中不能登出" : undefined} onClick={onLogout}>登出</button>
-            </>
-          ) : (
-            <span className="user-chip">請登入或註冊</span>
-          )}
+      {focusWarning && activeAttempt && (
+        <div className="modal-backdrop" role="alertdialog" aria-modal="true">
+          <section className="warning-modal">
+            <h2>作答提醒</h2>
+            <p>{focusWarning}</p>
+            <button className="primary-button" onClick={() => setFocusWarning("")}>我知道了</button>
+          </section>
         </div>
-      </div>
-    </header>
-  );
-}
-
-function FocusWarningModal({ message, onClose }: { message: string; onClose: () => void }) {
-  return (
-    <div className="modal-backdrop" role="alertdialog" aria-modal="true" aria-label="測驗警告">
-      <div className="warning-modal">
-        <h2>測驗警告</h2>
-        <p>{message}</p>
-        <button className="primary-button" data-testid="focus-warning-close" onClick={onClose}>我知道了</button>
-      </div>
-    </div>
-  );
-}
-
-function AuthPanel({
-  mode,
-  form,
-  loading,
-  onModeChange,
-  onFormChange,
-  onSubmit
-}: {
-  mode: AuthMode;
-  form: { name: string; studentId: string; email: string; password: string };
-  loading: boolean;
-  onModeChange: (mode: AuthMode) => void;
-  onFormChange: (form: { name: string; studentId: string; email: string; password: string }) => void;
-  onSubmit: (event: FormEvent) => void;
-}) {
-  return (
-    <section className="panel auth-panel">
-      <div>
-        <h1>{mode === "login" ? "登入 DataArena" : "註冊學生帳號"}</h1>
-        <p>學生可自行註冊。教師請使用管理員帳密登入。</p>
-      </div>
-      <form className="auth-form" onSubmit={onSubmit}>
-        {mode === "register" && (
-          <>
-            <label>姓名<input data-testid="auth-name" value={form.name} onChange={(event) => onFormChange({ ...form, name: event.target.value })} /></label>
-            <label>學號<input data-testid="auth-student-id" value={form.studentId} onChange={(event) => onFormChange({ ...form, studentId: event.target.value })} /></label>
-          </>
-        )}
-        <label>Email<input data-testid="auth-email" type="email" value={form.email} onChange={(event) => onFormChange({ ...form, email: event.target.value })} /></label>
-        <label>密碼<input data-testid="auth-password" type="password" value={form.password} onChange={(event) => onFormChange({ ...form, password: event.target.value })} /></label>
-        <div className="auth-actions">
-          <button className="primary-button" data-testid="auth-submit" disabled={loading}>{mode === "login" ? "登入" : "建立帳號"}</button>
-          <button className="secondary-button" data-testid="auth-mode-toggle" type="button" onClick={() => onModeChange(mode === "login" ? "register" : "login")}>
-            {mode === "login" ? "我要註冊學生帳號" : "已有帳號，改登入"}
-          </button>
-        </div>
-      </form>
-    </section>
-  );
-}
-
-function ProblemWorkspace({
-  problems,
-  selectedSlug,
-  selectedProblem,
-  attemptState,
-  remainingMs,
-  canEdit,
-  canSubmit,
-  locked,
-  code,
-  sampleInputs,
-  sampleOutputs,
-  result,
-  loading,
-  onSelectProblem,
-  onCodeChange,
-  onSampleInputChange,
-  onSampleOutputChange,
-  onStart,
-  onRun,
-  onSubmit,
-  onEditorBlocked
-}: {
-  problems: Array<[number, Problem[]]>;
-  selectedSlug: string;
-  selectedProblem: Problem | null;
-  attemptState: AttemptState | null;
-  remainingMs: number;
-  canEdit: boolean;
-  canSubmit: boolean;
-  locked: boolean;
-  code: string;
-  sampleInputs: Record<number, string>;
-  sampleOutputs: Record<number, string>;
-  result: GradeResult | null;
-  loading: boolean;
-  onSelectProblem: (slug: string) => void;
-  onCodeChange: (value: string) => void;
-  onSampleInputChange: (id: number, value: string) => void;
-  onSampleOutputChange: (id: number, value: string) => void;
-  onStart: () => void;
-  onRun: () => void;
-  onSubmit: () => void;
-  onEditorBlocked: (message: string) => void;
-}) {
-  return (
-    <div className="workspace-grid arena-page">
-      <aside className="problem-sidebar panel">
-        <h2>題目列表</h2>
-        <p>1-10 週，每週 5 題。Submit 每題每天最多 3 次，Test 不限次數。</p>
-        {problems.map(([week, weekProblems]) => (
-          <div className="week-group" key={week}>
-            <h3>Week {week}</h3>
-            {weekProblems.map((problem) => (
-              <button
-                key={problem.slug}
-                className={selectedSlug === problem.slug ? "problem-link active" : "problem-link"}
-                disabled={locked}
-                title={locked ? "測驗中不能切換題目" : undefined}
-                onClick={() => onSelectProblem(problem.slug)}
-              >
-                <span>{problem.title}</span>
-                <small>{problem.bestScore == null ? "未提交" : `最佳 ${problem.bestScore}%`}</small>
-              </button>
-            ))}
-          </div>
-        ))}
-      </aside>
-      {selectedProblem ? (
-        <section className="arena-workspace">
-          <div className="problem-pane">
-            <ProblemStatement problem={selectedProblem} />
-            <Samples
-              tests={selectedProblem.publicTests || []}
-              sampleInputs={sampleInputs}
-              sampleOutputs={sampleOutputs}
-              canEdit={canEdit}
-              onSampleInputChange={onSampleInputChange}
-              onSampleOutputChange={onSampleOutputChange}
-            />
-          </div>
-          <div className="code-pane">
-            <AttemptPanel problem={selectedProblem} attemptState={attemptState} remainingMs={remainingMs} loading={loading} onStart={onStart} />
-            <Editor
-              code={code}
-              canEdit={canEdit}
-              canSubmit={canSubmit}
-              loading={loading}
-              result={result}
-              onCodeChange={onCodeChange}
-              onRun={onRun}
-              onSubmit={onSubmit}
-              onBlocked={onEditorBlocked}
-            />
-          </div>
-        </section>
-      ) : (
-        <div className="panel empty-state">目前沒有題目。</div>
       )}
     </div>
   );
 }
 
-function ProblemStatement({ problem }: { problem: Problem }) {
+function Topbar({
+  view,
+  user,
+  onView,
+  onAuth,
+  onLogout
+}: {
+  view: View;
+  user: User | null;
+  onView: (view: View) => void;
+  onAuth: (mode: AuthMode) => void;
+  onLogout: () => void;
+}) {
   return (
-    <section className="problem-card statement-card">
-      <div className="problem-title-row">
-        <div>
-          <h1>{problem.title}</h1>
-          <div className="problem-meta">
-            <span>難度：{"★".repeat(problem.difficulty)}{"☆".repeat(3 - problem.difficulty)}</span>
-            <span>|</span>
-            <span>{problem.category}</span>
-            <span>|</span>
-            <span>{problem.isOpen ? "開放作答" : "暫停作答"}</span>
+    <header className="topbar">
+      <div className="topbar-inner">
+        <button className="brand-logo" onClick={() => onView("problems")} aria-label="Data Arena">
+          <span className="brand-data">Data</span>
+          <span className="brand-arena">Arena</span>
+        </button>
+
+        <nav className="nav" aria-label="主選單">
+          <button className={view === "problems" || view === "workspace" ? "nav-link active" : "nav-link"} onClick={() => onView("problems")}>
+            Problems
+          </button>
+          <button className={view === "leaderboard" ? "nav-link active" : "nav-link"} onClick={() => onView("leaderboard")}>
+            Leaderboard
+          </button>
+          <button className={view === "progress" ? "nav-link active" : "nav-link"} onClick={() => onView("progress")}>
+            Progress
+          </button>
+          <button className={view === "tutorial" ? "nav-link active" : "nav-link"} onClick={() => onView("tutorial")}>
+            Guide
+          </button>
+          {user?.role === "admin" && (
+            <button className={view === "teacher" ? "nav-link active" : "nav-link"} onClick={() => onView("teacher")}>
+              Teacher
+            </button>
+          )}
+        </nav>
+
+        <div className="topbar-spacer" />
+
+        {user ? (
+          <div className="account-area">
+            <span className="user-chip">{user.name}</span>
+            <button className="ghost-button compact" onClick={onLogout}>登出</button>
+          </div>
+        ) : (
+          <div className="topbar-auth" aria-label="登入註冊">
+            <button onClick={() => onAuth("login")}>登入</button>
+            <button onClick={() => onAuth("register")}>註冊</button>
+          </div>
+        )}
+      </div>
+    </header>
+  );
+}
+
+function AuthPage({
+  mode,
+  form,
+  loading,
+  onMode,
+  onForm,
+  onSubmit
+}: {
+  mode: AuthMode;
+  form: { name: string; studentId: string; email: string; password: string };
+  loading: boolean;
+  onMode: (mode: AuthMode) => void;
+  onForm: (form: { name: string; studentId: string; email: string; password: string }) => void;
+  onSubmit: (event: FormEvent) => void;
+}) {
+  return (
+    <section className="auth-page">
+      <form className="auth-card" onSubmit={onSubmit}>
+        <div className="auth-logo-row">
+          <span className="brand-data">Data</span>
+          <span className="brand-arena">Arena</span>
+        </div>
+        <div className="auth-tabs" role="tablist" aria-label="登入或註冊">
+          <button type="button" className={mode === "login" ? "active" : ""} onClick={() => onMode("login")}>登入</button>
+          <button type="button" className={mode === "register" ? "active" : ""} onClick={() => onMode("register")}>註冊</button>
+        </div>
+
+        {mode === "register" && (
+          <>
+            <label>
+              姓名
+              <input value={form.name} onChange={(event) => onForm({ ...form, name: event.target.value })} autoComplete="name" />
+            </label>
+            <label>
+              學號
+              <input value={form.studentId} onChange={(event) => onForm({ ...form, studentId: event.target.value })} autoComplete="off" />
+            </label>
+          </>
+        )}
+
+        <label>
+          Email
+          <input value={form.email} onChange={(event) => onForm({ ...form, email: event.target.value })} autoComplete="email" />
+        </label>
+        <label>
+          密碼
+          <input type="password" value={form.password} onChange={(event) => onForm({ ...form, password: event.target.value })} autoComplete={mode === "login" ? "current-password" : "new-password"} />
+        </label>
+
+        <button className="primary-button auth-submit" disabled={loading}>
+          {mode === "login" ? "登入" : "建立學生帳號"}
+        </button>
+      </form>
+    </section>
+  );
+}
+
+function ProblemListView({
+  user,
+  problems,
+  loading,
+  search,
+  difficultyFilter,
+  onSearch,
+  onDifficultyFilter,
+  onOpenProblem
+}: {
+  user: User | null;
+  problems: Problem[];
+  loading: boolean;
+  search: string;
+  difficultyFilter: DifficultyFilter;
+  onSearch: (value: string) => void;
+  onDifficultyFilter: (value: DifficultyFilter) => void;
+  onOpenProblem: (slug: string) => void;
+}) {
+  const filteredProblems = useMemo(() => {
+    const normalizedSearch = search.trim().toLowerCase();
+    return problems.filter((problem) => {
+      const title = displayProblemTitle(problem).toLowerCase();
+      const category = displayCategory(problem).toLowerCase();
+      const matchesSearch = !normalizedSearch || title.includes(normalizedSearch) || category.includes(normalizedSearch) || problem.functionName.includes(normalizedSearch);
+      const matchesDifficulty = difficultyFilter === "all" || String(problem.difficulty) === difficultyFilter;
+      return matchesSearch && matchesDifficulty;
+    });
+  }, [problems, search, difficultyFilter]);
+
+  const solved = problems.filter((problem) => Number(problem.bestScore ?? 0) >= 100).length;
+
+  return (
+    <section className="problem-list-shell">
+      <section className="problem-center">
+        <div className="problem-list-heading">
+          <div>
+            <h1>Problem List</h1>
+            <p>{user ? `${user.name}，選擇一題開始練習。` : "選擇題目開始練習；登入後可以記錄進度與分數。"}</p>
+          </div>
+          <span>{filteredProblems.length}/{problems.length} 題</span>
+        </div>
+
+        <div className="list-toolbar">
+          <label className="problem-search">
+            <span>⌕</span>
+            <input value={search} onChange={(event) => onSearch(event.target.value)} placeholder="Search questions" />
+          </label>
+          <select value={difficultyFilter} onChange={(event) => onDifficultyFilter(event.target.value as DifficultyFilter)} aria-label="難度篩選">
+            <option value="all">All</option>
+            <option value="1">Easy</option>
+            <option value="2">Medium</option>
+            <option value="3">Hard</option>
+          </select>
+          <div className="solved-counter">
+            <span className="progress-ring" />
+            {solved}/{problems.length} Solved
           </div>
         </div>
-        <div className="time-limit">時限：{Math.round(problem.timeLimitSeconds / 60)} 分鐘</div>
-      </div>
-      <div className="rule" />
-      <h2>題目描述</h2>
-      <p>{problem.statement}</p>
-      <h2>輸入格式</h2>
-      <p>{problem.inputFormat}</p>
-      <h2>輸出格式</h2>
-      <p>{problem.outputFormat}</p>
-      <h2>限制</h2>
-      <p>{problem.constraintsText}</p>
-      <p>請實作函式 <code>{problem.functionName}({problem.signature.join(", ")})</code>。</p>
+
+        <div className="question-list" aria-busy={loading}>
+          {filteredProblems.length === 0 ? (
+            <div className="empty-state padded">目前沒有符合條件的題目。</div>
+          ) : (
+            filteredProblems.map((problem, index) => (
+              <button className="question-row" key={problem.slug} onClick={() => onOpenProblem(problem.slug)}>
+                <span className={Number(problem.bestScore ?? 0) >= 100 ? "row-status solved" : "row-status"}>{Number(problem.bestScore ?? 0) >= 100 ? "✓" : ""}</span>
+                <strong>{index + 1}. {displayProblemTitle(problem)}</strong>
+                <span className="row-category">{displayCategory(problem)}</span>
+                <span className={`difficulty d${problem.difficulty}`}>{difficultyLabel(problem.difficulty)}</span>
+                <span className={problem.isOpen ? "lock-icon" : "lock-icon closed"}>{problem.isOpen ? "▮▮" : "🔒"}</span>
+              </button>
+            ))
+          )}
+        </div>
+      </section>
     </section>
   );
 }
 
-function AttemptPanel({
+function ProblemWorkspace({
   problem,
-  attemptState,
-  remainingMs,
-  loading,
-  onStart
-}: {
-  problem: Problem;
-  attemptState: AttemptState | null;
-  remainingMs: number;
-  loading: boolean;
-  onStart: () => void;
-}) {
-  const active = attemptState?.activeAttempt;
-  const used = attemptState?.dailyUsed ?? 0;
-  const limit = attemptState?.dailyLimit ?? 3;
-  return (
-    <section className="panel attempt-panel">
-      <div>
-        <h2>作答</h2>
-        <p>按開始後才可編輯。Test 不限次數；Submit 每題每天最多 3 次。作答中會鎖定導覽與題目切換。</p>
-      </div>
-      <div className="attempt-controls">
-        <div className={active ? "timer-badge active" : "timer-badge"}>{active ? formatDuration(remainingMs) : "尚未開始"}</div>
-        <span>今日 Submit {used}/{limit}</span>
-        <button className="primary-button" data-testid="start-attempt" disabled={loading || !problem.isOpen || !attemptState?.canStart} onClick={onStart}>
-          開始
-        </button>
-      </div>
-      {attemptState && !attemptState.canSubmit && <p className="empty-state">今日 Submit 次數已用完，仍可 Test，但不能再 Submit。</p>}
-    </section>
-  );
-}
-
-function Samples({
-  tests,
+  problems,
+  selectedIndex,
+  selectedSlug,
+  code,
   sampleInputs,
   sampleOutputs,
-  canEdit,
-  onSampleInputChange,
-  onSampleOutputChange
-}: {
-  tests: PublicTest[];
-  sampleInputs: Record<number, string>;
-  sampleOutputs: Record<number, string>;
-  canEdit: boolean;
-  onSampleInputChange: (id: number, value: string) => void;
-  onSampleOutputChange: (id: number, value: string) => void;
-}) {
-  return (
-    <section className="panel sample-panel">
-      <h2>Sample Testcase</h2>
-      <p className="empty-state">題目頁只顯示 sample。按開始後可編輯 sample input 與 expected output，再按 Test 測試。</p>
-      <div className="sample-grid editable">
-        {tests.map((test) => (
-          <article className="sample-item" key={test.id}>
-            <strong>{test.name}</strong>
-            <label>
-              Input
-              <textarea
-                className="sample-input"
-                data-testid={`sample-input-${test.id}`}
-                value={sampleInputs[test.id] || ""}
-                disabled={!canEdit}
-                onChange={(event) => onSampleInputChange(test.id, event.target.value)}
-              />
-            </label>
-            <label>
-              Expected
-              <textarea
-                className="sample-input sample-output"
-                data-testid={`sample-output-${test.id}`}
-                value={sampleOutputs[test.id] || ""}
-                disabled={!canEdit}
-                onChange={(event) => onSampleOutputChange(test.id, event.target.value)}
-              />
-            </label>
-          </article>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function Editor({
-  code,
+  activeCaseId,
+  runResult,
+  attemptState,
+  remainingMs,
   canEdit,
   canSubmit,
   loading,
-  result,
+  workspaceSplit,
+  testSplit,
+  onBack,
+  onOpenProblem,
   onCodeChange,
+  onSampleInputChange,
+  onSampleOutputChange,
+  onActiveCase,
+  onStart,
   onRun,
   onSubmit,
-  onBlocked
+  onWorkspaceSplit,
+  onTestSplit
 }: {
+  problem: Problem | null;
+  problems: Problem[];
+  selectedIndex: number;
+  selectedSlug: string;
   code: string;
+  sampleInputs: Record<number, string>;
+  sampleOutputs: Record<number, string>;
+  activeCaseId: number | null;
+  runResult: GradeResult | null;
+  attemptState: AttemptState | null;
+  remainingMs: number;
   canEdit: boolean;
   canSubmit: boolean;
   loading: boolean;
-  result: GradeResult | null;
+  workspaceSplit: number;
+  testSplit: number;
+  onBack: () => void;
+  onOpenProblem: (slug: string) => void;
   onCodeChange: (value: string) => void;
+  onSampleInputChange: (id: number, value: string) => void;
+  onSampleOutputChange: (id: number, value: string) => void;
+  onActiveCase: (id: number) => void;
+  onStart: () => void;
   onRun: () => void;
   onSubmit: () => void;
-  onBlocked: (message: string) => void;
+  onWorkspaceSplit: (value: number) => void;
+  onTestSplit: (value: number) => void;
 }) {
-  const lineNumbers = useMemo(() => code.split("\n").map((_, index) => index + 1).join("\n"), [code]);
-  const highlightedCode = useMemo(() => highlightPython(code), [code]);
-  const highlightRef = useRef<HTMLPreElement>(null);
-  const gutterRef = useRef<HTMLPreElement>(null);
+  const shellRef = useRef<HTMLDivElement>(null);
+  const rightRef = useRef<HTMLDivElement>(null);
 
-  function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if (!canEdit) {
-      event.preventDefault();
-      onBlocked("請先按開始作答");
-      return;
-    }
-    if (event.key !== "Tab") return;
+  const beginColumnResize = (event: ReactPointerEvent<HTMLDivElement>) => {
     event.preventDefault();
-    applyTab(event.currentTarget, event.shiftKey, onCodeChange);
-  }
+    const move = (moveEvent: PointerEvent) => {
+      const rect = shellRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const next = ((moveEvent.clientX - rect.left) / rect.width) * 100;
+      onWorkspaceSplit(clamp(next, 28, 66));
+    };
+    startDocumentDrag(move);
+  };
 
-  function blockClipboard(event: ClipboardEvent<HTMLTextAreaElement>) {
+  const beginRowResize = (event: ReactPointerEvent<HTMLDivElement>) => {
     event.preventDefault();
-    onBlocked("競賽模式禁止在編輯器內複製、剪下或貼上");
-  }
+    const move = (moveEvent: PointerEvent) => {
+      const rect = rightRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const next = ((moveEvent.clientY - rect.top) / rect.height) * 100;
+      onTestSplit(clamp(next, 38, 78));
+    };
+    startDocumentDrag(move);
+  };
 
-  function syncEditorScroll(event: UIEvent<HTMLTextAreaElement>) {
-    const target = event.currentTarget;
-    if (highlightRef.current) {
-      highlightRef.current.scrollTop = target.scrollTop;
-      highlightRef.current.scrollLeft = target.scrollLeft;
-    }
-    if (gutterRef.current) {
-      gutterRef.current.scrollTop = target.scrollTop;
-    }
+  const handleColumnKey = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "ArrowLeft") onWorkspaceSplit(clamp(workspaceSplit - 3, 28, 66));
+    if (event.key === "ArrowRight") onWorkspaceSplit(clamp(workspaceSplit + 3, 28, 66));
+  };
+
+  const handleRowKey = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "ArrowUp") onTestSplit(clamp(testSplit - 3, 38, 78));
+    if (event.key === "ArrowDown") onTestSplit(clamp(testSplit + 3, 38, 78));
+  };
+
+  if (!problem) {
+    return (
+      <section className="workspace-empty">
+        <button className="ghost-button" onClick={onBack}>返回 Problem List</button>
+        <p>目前沒有可顯示的題目。</p>
+      </section>
+    );
   }
 
   return (
-    <section className="editor-section">
-      <div className="editor-heading">
-        <h2>Code</h2>
-        <span>Python 3｜Tab 可縮排｜禁止複製貼上</span>
+    <section className="workspace-shell">
+      <div className="workspace-toolbar">
+        <div className="problem-picker">
+          <button className="ghost-button compact" onClick={onBack}>Problem List</button>
+          <select value={selectedSlug} onChange={(event) => onOpenProblem(event.target.value)} aria-label="選擇題目">
+            {problems.map((item, index) => (
+              <option key={item.slug} value={item.slug}>
+                {index + 1}. {displayProblemTitle(item)}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="toolbar-actions">
+          <span className={canEdit ? "timer-badge active" : "timer-badge"}>{formatDuration(remainingMs)}</span>
+          <button className="ghost-button compact" disabled={loading || canEdit || !attemptState?.canStart} onClick={onStart}>Start</button>
+          <button className="ghost-button compact" disabled={loading || !canEdit} onClick={onRun}>Run</button>
+          <button className="submit-button" disabled={loading || !canSubmit} onClick={onSubmit}>Submit</button>
+        </div>
       </div>
-      <div className={canEdit ? "arena-editor" : "arena-editor locked"}>
-        <pre ref={gutterRef} className="line-gutter" aria-hidden="true">{lineNumbers}</pre>
-        <div className="code-layer">
-          <pre ref={highlightRef} className="code-highlight" aria-hidden="true" dangerouslySetInnerHTML={{ __html: highlightedCode }} />
-          <textarea
-            className="code-editor"
-            data-testid="code-editor"
-            spellCheck={false}
-            wrap="off"
-            value={code}
-            readOnly={!canEdit}
-            onChange={(event) => onCodeChange(event.target.value)}
-            onScroll={syncEditorScroll}
-            onKeyDown={handleKeyDown}
-            onCopy={blockClipboard}
-            onCut={blockClipboard}
-            onPaste={blockClipboard}
-            onContextMenu={(event) => event.preventDefault()}
-            onFocus={() => {
-              if (!canEdit) onBlocked("請先按開始作答，倒數開始後才可編輯");
-            }}
+
+      <div
+        ref={shellRef}
+        className="workspace-grid"
+        style={{ gridTemplateColumns: `${workspaceSplit}% 8px minmax(0, 1fr)` }}
+      >
+        <ProblemStatement problem={problem} problemNumber={selectedIndex >= 0 ? selectedIndex + 1 : undefined} />
+        <div
+          className="splitter vertical"
+          role="separator"
+          aria-orientation="vertical"
+          tabIndex={0}
+          onPointerDown={beginColumnResize}
+          onKeyDown={handleColumnKey}
+        />
+        <div
+          ref={rightRef}
+          className="workspace-right"
+          style={{ gridTemplateRows: `${testSplit}% 8px minmax(240px, 1fr)` }}
+        >
+          <CodePanel code={code} canEdit={canEdit} onCodeChange={onCodeChange} />
+          <div
+            className="splitter horizontal"
+            role="separator"
+            aria-orientation="horizontal"
+            tabIndex={0}
+            onPointerDown={beginRowResize}
+            onKeyDown={handleRowKey}
+          />
+          <TestcasePanel
+            problem={problem}
+            activeCaseId={activeCaseId}
+            sampleInputs={sampleInputs}
+            sampleOutputs={sampleOutputs}
+            result={runResult}
+            onActiveCase={onActiveCase}
+            onInputChange={onSampleInputChange}
+            onOutputChange={onSampleOutputChange}
           />
         </div>
       </div>
-      <div className="editor-actions">
-        <button className="secondary-button" data-testid="run-tests" disabled={loading || !canEdit} onClick={onRun}>Test</button>
-        <button className="primary-button" data-testid="submit-code" disabled={loading || !canSubmit} onClick={onSubmit}>Submit</button>
+    </section>
+  );
+}
+
+function ProblemStatement({ problem, problemNumber }: { problem: Problem; problemNumber?: number }) {
+  const tests = problem.publicTests || [];
+
+  return (
+    <article className="leetcode-panel description-panel">
+      <div className="panel-tabs">
+        <button className="panel-tab active">Description</button>
+        <button className="panel-tab">Editorial</button>
+        <button className="panel-tab">Solutions</button>
+        <button className="panel-tab">Submissions</button>
       </div>
+      <div className="problem-statement">
+        <div className="problem-title-row">
+          <h1>{problemNumber ? `${problemNumber}. ` : ""}{displayProblemTitle(problem)}</h1>
+          {Number(problem.bestSubmission?.score ?? problem.bestScore ?? 0) >= 100 && <span className="solved-chip">Solved ✓</span>}
+        </div>
+        <div className="problem-meta">
+          <span className={`difficulty d${problem.difficulty}`}>{difficultyLabel(problem.difficulty)}</span>
+          <span>{displayCategory(problem)}</span>
+          <span>{displaySeries(problem)}</span>
+          {!problem.isOpen && <span className="closed-chip">Closed</span>}
+        </div>
+
+        <p>{displayStatement(problem)}</p>
+
+        {tests.map((test, index) => (
+          <section className="example-block" key={test.id}>
+            <h3>Example {index + 1}:</h3>
+            <pre>{`Input: ${formatFunctionCall(problem.signature, test.args)}
+Output: ${prettyJson(test.expected)}`}</pre>
+          </section>
+        ))}
+
+        <section className="statement-section">
+          <h2>Input Format</h2>
+          <p>{displayInputFormat(problem)}</p>
+        </section>
+        <section className="statement-section">
+          <h2>Output Format</h2>
+          <p>{displayOutputFormat(problem)}</p>
+        </section>
+        <section className="statement-section">
+          <h2>Constraints</h2>
+          <pre className="constraint-block">{displayConstraints(problem)}</pre>
+        </section>
+      </div>
+    </article>
+  );
+}
+
+function CodePanel({
+  code,
+  canEdit,
+  onCodeChange
+}: {
+  code: string;
+  canEdit: boolean;
+  onCodeChange: (value: string) => void;
+}) {
+  const highlightRef = useRef<HTMLPreElement>(null);
+  const gutterRef = useRef<HTMLPreElement>(null);
+  const lineNumbers = useMemo(() => {
+    const count = Math.max(1, code.split("\n").length);
+    return Array.from({ length: count }, (_, index) => String(index + 1)).join("\n");
+  }, [code]);
+
+  const syncScroll = (event: UIEvent<HTMLTextAreaElement>) => {
+    if (highlightRef.current) {
+      highlightRef.current.scrollTop = event.currentTarget.scrollTop;
+      highlightRef.current.scrollLeft = event.currentTarget.scrollLeft;
+    }
+    if (gutterRef.current) gutterRef.current.scrollTop = event.currentTarget.scrollTop;
+  };
+
+  const handleKeyDown = (event: ReactKeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key !== "Tab") return;
+    event.preventDefault();
+    applyTab(event.currentTarget, event.shiftKey, onCodeChange);
+  };
+
+  return (
+    <section className="leetcode-panel code-panel">
+      <div className="code-header">
+        <strong>Code</strong>
+        <span>Python3</span>
+        <span>Auto</span>
+      </div>
+      <div className={canEdit ? "arena-editor" : "arena-editor locked"}>
+        <pre className="line-gutter" ref={gutterRef}>{lineNumbers}</pre>
+        <div className="code-layer">
+          <pre
+            ref={highlightRef}
+            className="code-highlight"
+            aria-hidden="true"
+            dangerouslySetInnerHTML={{ __html: highlightPython(code) }}
+          />
+          <textarea
+            className="code-editor"
+            value={code}
+            onChange={(event) => onCodeChange(event.target.value)}
+            onScroll={syncScroll}
+            onKeyDown={handleKeyDown}
+            spellCheck={false}
+            disabled={!canEdit}
+            aria-label="Python 程式碼編輯器"
+          />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function TestcasePanel({
+  problem,
+  activeCaseId,
+  sampleInputs,
+  sampleOutputs,
+  result,
+  onActiveCase,
+  onInputChange,
+  onOutputChange
+}: {
+  problem: Problem;
+  activeCaseId: number | null;
+  sampleInputs: Record<number, string>;
+  sampleOutputs: Record<number, string>;
+  result: GradeResult | null;
+  onActiveCase: (id: number) => void;
+  onInputChange: (id: number, value: string) => void;
+  onOutputChange: (id: number, value: string) => void;
+}) {
+  const tests = problem.publicTests || [];
+  const active = tests.find((test) => test.id === activeCaseId) || tests[0];
+
+  return (
+    <section className="leetcode-panel tests-panel">
+      <div className="panel-tabs">
+        <button className="panel-tab active">Testcase</button>
+        <button className="panel-tab">Test Result</button>
+      </div>
+      <div className="case-tabs">
+        {tests.map((test, index) => (
+          <button className={test.id === active?.id ? "active" : ""} key={test.id} onClick={() => onActiveCase(test.id)}>
+            Case {index + 1}
+          </button>
+        ))}
+      </div>
+
+      {active ? (
+        <div className="case-editor">
+          <label>
+            input args =
+            <textarea
+              className="sample-input taller"
+              value={sampleInputs[active.id] || ""}
+              onChange={(event) => onInputChange(active.id, event.target.value)}
+              spellCheck={false}
+            />
+          </label>
+          <label>
+            output =
+            <textarea
+              className="sample-input taller"
+              value={sampleOutputs[active.id] || ""}
+              onChange={(event) => onOutputChange(active.id, event.target.value)}
+              spellCheck={false}
+            />
+          </label>
+        </div>
+      ) : (
+        <p className="result-placeholder">這題尚未設定公開範例測資。</p>
+      )}
+
       <ResultBox result={result} />
     </section>
   );
 }
 
 function ResultBox({ result }: { result: GradeResult | null }) {
+  if (!result) return <p className="result-placeholder">Run 或 Submit 後會顯示結果。</p>;
+
   return (
-    <div className="result-box">
+    <section className="result-box">
       <div className="result-header">
-        <strong>Result</strong>
-        <span>{result ? `${result.passedTests}/${result.totalTests}` : "尚未執行"}</span>
+        <strong>{result.passed ? "Accepted" : "Wrong Answer"}</strong>
+        <span>{result.passedTests}/{result.totalTests} tests · {result.runtimeMs}ms · score {result.score}</span>
       </div>
-      {result ? (
-        <div className="result-list">
-          {result.details.map((detail) => (
-            <div className={detail.passed ? "test-pass" : "test-fail"} key={detail.id}>
-              <strong>{detail.passed ? "通過" : "失敗"}：{detail.name}</strong>
-              <span>{detail.message}</span>
+      <div className="result-list">
+        {result.details.map((detail) => (
+          <article className={detail.passed ? "test-pass" : "test-fail"} key={`${detail.id}-${detail.name}`}>
+            <strong>{detail.passed ? "✓" : "×"} {detail.name} <span>{detail.visibility}</span></strong>
+            <p>{detail.message}</p>
+            {(detail.args !== undefined || detail.expected !== undefined || detail.actual !== undefined) && (
               <div className="case-debug">
-                {detail.args !== undefined && <DebugBlock label="Input" value={detail.args} />}
-                {detail.expected !== undefined && <DebugBlock label="Expected" value={detail.expected} />}
-                {detail.actual !== undefined && <DebugBlock label="Actual" value={detail.actual} />}
-                {detail.error && <DebugBlock label="Error" value={detail.error} />}
+                {detail.args !== undefined && <DebugValue label="args" value={detail.args} />}
+                {detail.expected !== undefined && <DebugValue label="expected" value={detail.expected} />}
+                {detail.actual !== undefined && <DebugValue label="actual" value={detail.actual} />}
               </div>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <p className="result-placeholder">按 Test 執行 sample；按 Submit 送出全部測資。</p>
-      )}
-    </div>
+            )}
+            {detail.error && <pre className="error-output">{detail.error}</pre>}
+          </article>
+        ))}
+      </div>
+    </section>
   );
 }
 
-function DebugBlock({ label, value }: { label: string; value: unknown }) {
+function DebugValue({ label, value }: { label: string; value: unknown }) {
   return (
     <div>
       <small>{label}</small>
-      <pre>{typeof value === "string" ? value : prettyJson(value)}</pre>
+      <pre>{prettyJson(value)}</pre>
     </div>
   );
 }
 
 function TutorialView() {
   return (
-    <section className="tutorial-page">
-      <section className="tutorial-hero">
+    <section className="page-stack">
+      <div className="page-heading">
         <div>
-          <span className="eyebrow">Student Guide</span>
-          <h1>使用教學</h1>
-          <p>
-            依照這個流程完成作答：先讀題、按開始、用 Test 驗證 sample，最後再 Submit。
-            開始後請留在本題，系統會計時並記錄離開與切換視窗。
-          </p>
+          <h1>Guide</h1>
+          <p>學生先從 Problem List 選題，按 Start 後編輯 Python function，Run 測公開測資，Submit 送公開與隱藏測資。</p>
         </div>
-        <div className="tutorial-callout">
-          <strong>重點規則</strong>
-          <span>Test 不限次數，Submit 每題每天 3 次。</span>
-        </div>
+      </div>
+      <section className="tutorial-grid">
+        <article className="tutorial-card">
+          <h2>1. 選題</h2>
+          <p>題目列表只會顯示老師開放的題目。老師關閉後，學生看不到也不能直接開 URL 作答。</p>
+        </article>
+        <article className="tutorial-card">
+          <h2>2. 作答</h2>
+          <p>點進題目後可拖曳左右與上下分隔線，調整 Description、Code、Testcase 三個區塊大小。</p>
+        </article>
+        <article className="tutorial-card">
+          <h2>3. 上傳題目</h2>
+          <p>老師可在 Teacher 頁面建立題目、測資與 starter function，預設建立後立即開放。</p>
+        </article>
       </section>
-
-      <section className="tutorial-grid" aria-label="作答流程">
-        {TUTORIAL_STEPS.map((step, index) => (
-          <article className="tutorial-card" key={step.title}>
-            <span>{String(index + 1).padStart(2, "0")}</span>
-            <h2>{step.title}</h2>
-            <p>{step.body}</p>
-          </article>
-        ))}
-      </section>
-
-      <section className="panel tutorial-section">
-        <div className="panel-heading split">
-          <div>
-            <h1>作答時要注意</h1>
-            <p>這些規則和正式競賽紀錄直接相關。</p>
-          </div>
-        </div>
-        <div className="tutorial-rules">
-          <div>
-            <strong>Sample 可編輯</strong>
-            <p>按開始後，Sample Input 與 Expected Output 都可以自行改，用來驗證自己的想法。</p>
-          </div>
-          <div>
-            <strong>錯誤會顯示測資</strong>
-            <p>Submit 失敗時會顯示造成錯誤的公開測資、Expected、Actual 與錯誤訊息。</p>
-          </div>
-          <div>
-            <strong>編輯器限制</strong>
-            <p>支援 Tab 縮排與 Python 顏色標示，但不能複製、剪下、貼上或開右鍵選單。</p>
-          </div>
-        </div>
-      </section>
-
-      {/* <section className="panel tutorial-section">
-        <div className="panel-heading split">
-          <div>
-            <h1>範例題目答案</h1>
-            <p>以下提供 Week 1 五題的參考寫法，適合第一次使用平台時練習輸入、Test 與 Submit 流程。</p>
-          </div>
-        </div>
-        <div className="answer-list">
-          {TUTORIAL_SOLUTIONS.map((solution) => (
-            <article className="answer-card" key={solution.functionName}>
-              <div className="answer-heading">
-                <div>
-                  <h2>{solution.title}</h2>
-                  <code>{solution.functionName}</code>
-                </div>
-                <p>{solution.note}</p>
-              </div>
-              <pre
-                className="tutorial-code"
-                dangerouslySetInnerHTML={{ __html: highlightPython(solution.code) }}
-              />
-            </article>
-          ))}
-        </div>
-      </section> */}
     </section>
   );
 }
@@ -1259,38 +1425,37 @@ function LeaderboardView({
   explanation: LeaderboardExplanation | null;
 }) {
   const [showRules, setShowRules] = useState(false);
+
   return (
-    <section className="leaderboard-page">
-      <div className="leaderboard-heading">
+    <section className="page-stack">
+      <div className="page-heading">
         <div>
-          <h1>全站總排行榜</h1>
-          <p>此排名針對全部題目，不是單題排行榜。核心指標是每題排名的平均值。</p>
+          <h1>Leaderboard</h1>
+          <p>依每題表現、執行時間與 submit 次數計算排名。</p>
         </div>
-        <button className="secondary-button" data-testid="leaderboard-rules" onClick={() => setShowRules((current) => !current)}>
-          排名說明
-        </button>
+        <button className="ghost-button" onClick={() => setShowRules((current) => !current)}>排名規則</button>
       </div>
       {showRules && explanation && (
         <section className="panel ranking-rules">
-          <h2>{explanation.title}</h2>
-          <p>{explanation.summary}</p>
-          <p>{explanation.perProblemScore}</p>
-          <p>{explanation.ranking}</p>
-          <p>{explanation.tieBreakers}</p>
+          <h2>{cleanText(explanation.title, "排名規則")}</h2>
+          <p>{cleanText(explanation.summary, "每題都會計算題目分，再取所有開放題目的平均排名。")}</p>
+          <p>{cleanText(explanation.perProblemScore, "題目分包含最佳分數、執行時間、submit 次數與失敗次數。")}</p>
+          <p>{cleanText(explanation.ranking, "平均排名越低，總排名越前面。")}</p>
+          <p>{cleanText(explanation.tieBreakers, "同分時依解題數、平均題目分、總執行時間等項目排序。")}</p>
         </section>
       )}
-      <section className="panel">
+      <section className="panel table-panel">
         {leaderboard.length === 0 ? (
-          <p className="empty-state">目前尚無學生提交，排行榜歸零。</p>
+          <p className="empty-state">目前還沒有排行榜資料。</p>
         ) : (
           <table className="ranking-table global-ranking">
             <thead>
               <tr>
-                <th>排名</th>
+                <th>Rank</th>
                 <th>學生</th>
-                <th>平均題目排名</th>
+                <th>平均排名</th>
                 <th>解題</th>
-                <th>平均題目分</th>
+                <th>平均分</th>
                 <th>Submit</th>
                 <th>失敗</th>
                 <th>總時間</th>
@@ -1300,7 +1465,7 @@ function LeaderboardView({
               {leaderboard.map((entry) => (
                 <tr key={entry.studentId}>
                   <td>{entry.rank}</td>
-                  <td>{entry.name}<span>學號：{entry.studentId}</span></td>
+                  <td>{entry.name}<span>{entry.studentId}</span></td>
                   <td>{entry.averageRank}</td>
                   <td>{entry.solvedProblems}/{entry.problemCount}</td>
                   <td>{entry.averageProblemScore}</td>
@@ -1317,26 +1482,32 @@ function LeaderboardView({
   );
 }
 
-function ProgressView({ user, progress }: { user: User | null; progress: unknown[] }) {
+function ProgressView({ user, progress }: { user: User | null; progress: ProgressRow[] }) {
   if (!user) return <section className="panel">請先登入。</section>;
   return (
-    <section className="panel">
-      <h1>我的進度</h1>
-      <p>所有進度由 submissions 資料表即時計算。</p>
-      <table className="ranking-table">
-        <thead><tr><th>週次</th><th>題目</th><th>Submit</th><th>最佳分數</th><th>最後提交</th></tr></thead>
-        <tbody>
-          {progress.map((row: any) => (
-            <tr key={row.id}>
-              <td>Week {row.week}</td>
-              <td>{row.title}</td>
-              <td>{row.submissions}</td>
-              <td>{row.best_score == null ? "-" : `${row.best_score}%`}</td>
-              <td>{row.last_submission || "-"}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <section className="page-stack">
+      <div className="page-heading">
+        <div>
+          <h1>Progress</h1>
+          <p>查看每一題的 submit 次數、最佳分數與最後提交時間。</p>
+        </div>
+      </div>
+      <section className="panel table-panel">
+        <table className="ranking-table">
+          <thead><tr><th>週次</th><th>題目</th><th>Submit</th><th>最佳分數</th><th>最後提交</th></tr></thead>
+          <tbody>
+            {progress.map((row) => (
+              <tr key={row.id}>
+                <td>Week {row.week}</td>
+                <td>{cleanText(row.title, titleFromSlug(row.slug))}</td>
+                <td>{row.submissions}</td>
+                <td>{row.best_score == null ? "-" : `${row.best_score}%`}</td>
+                <td>{row.last_submission || "-"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </section>
     </section>
   );
 }
@@ -1345,41 +1516,149 @@ function TeacherView({
   user,
   dashboard,
   problems,
-  onToggleProblem
+  form,
+  loading,
+  onToggleProblem,
+  onFormChange,
+  onCreateProblem,
+  onResetTemplate
 }: {
   user: User | null;
   dashboard: Dashboard | null;
   problems: Problem[];
+  form: ProblemForm;
+  loading: boolean;
   onToggleProblem: (problem: Problem) => void;
+  onFormChange: (form: ProblemForm) => void;
+  onCreateProblem: (event: FormEvent) => void;
+  onResetTemplate: () => void;
 }) {
-  if (user?.role !== "admin") return <section className="panel">需要管理員帳號。</section>;
+  const [tab, setTab] = useState<"manage" | "upload">("manage");
+  if (user?.role !== "admin") return <section className="panel">只有老師帳號可以進入此頁。</section>;
+
   return (
     <section className="teacher-dashboard">
-      <div className="panel-heading">
-        <h1>教師後台</h1>
-        <p>所有統計都來自資料庫。</p>
-      </div>
-      <div className="metric-row">
-        <MetricCard label="學生數" value={String(dashboard?.counts.students ?? 0)} hint="註冊學生帳號" />
-        <MetricCard label="題目數" value={String(dashboard?.counts.problems ?? 0)} hint="1-10 週，每週 5 題" />
-        <MetricCard label="作答紀錄" value={String(dashboard?.counts.attempts ?? 0)} hint="開始、逾時、離開紀錄" />
-        <MetricCard label="Submit" value={String(dashboard?.counts.submissions ?? 0)} hint="實際提交紀錄" />
-      </div>
-      <section className="panel">
-        <h2>題目開放管理</h2>
-        <div className="admin-problem-list">
-          {problems.map((problem) => (
-            <div className="admin-row" key={problem.id}>
-              <span>Week {problem.week}</span>
-              <strong>{problem.title}</strong>
-              <button className={problem.isOpen ? "secondary-button compact" : "primary-button compact"} onClick={() => onToggleProblem(problem)}>
-                {problem.isOpen ? "關閉作答" : "開放作答"}
-              </button>
-            </div>
-          ))}
+      <div className="page-heading">
+        <div>
+          <h1>Teacher</h1>
+          <p>管理題目開放狀態，或上傳新的 Python function 題目與測資。</p>
         </div>
-      </section>
+        <div className="segmented">
+          <button className={tab === "manage" ? "active" : ""} onClick={() => setTab("manage")}>題目管理</button>
+          <button className={tab === "upload" ? "active" : ""} onClick={() => setTab("upload")}>上傳題目</button>
+        </div>
+      </div>
+
+      <div className="metric-row">
+        <MetricCard label="學生" value={String(dashboard?.counts.students ?? 0)} hint="已註冊學生" />
+        <MetricCard label="題目" value={String(dashboard?.counts.problems ?? 0)} hint={`${dashboard?.counts.openProblems ?? 0} 題開放中`} />
+        <MetricCard label="作答" value={String(dashboard?.counts.attempts ?? 0)} hint="所有 attempt" />
+        <MetricCard label="Submit" value={String(dashboard?.counts.submissions ?? 0)} hint={`${dashboard?.counts.passedSubmissions ?? 0} 次通過`} />
+      </div>
+
+      {tab === "manage" ? (
+        <section className="panel">
+          <div className="panel-title-row">
+            <h2>題目開放 / 關閉</h2>
+            <span>預設所有題目開放；關閉後學生列表會隱藏。</span>
+          </div>
+          <div className="admin-problem-list">
+            {problems.map((problem) => (
+              <div className="admin-row" key={problem.id}>
+                <span>Week {problem.week}</span>
+                <strong>{displayProblemTitle(problem)}</strong>
+                <em>{problem.isOpen ? "學生可見" : "已關閉"}</em>
+                <button className={problem.isOpen ? "ghost-button compact danger" : "primary-button compact"} onClick={() => onToggleProblem(problem)}>
+                  {problem.isOpen ? "關閉題目" : "開放題目"}
+                </button>
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : (
+        <section className="teacher-upload-grid">
+          <ProblemUploadForm form={form} loading={loading} onFormChange={onFormChange} onSubmit={onCreateProblem} onResetTemplate={onResetTemplate} />
+          <UploadGuide />
+        </section>
+      )}
     </section>
+  );
+}
+
+function ProblemUploadForm({
+  form,
+  loading,
+  onFormChange,
+  onSubmit,
+  onResetTemplate
+}: {
+  form: ProblemForm;
+  loading: boolean;
+  onFormChange: (form: ProblemForm) => void;
+  onSubmit: (event: FormEvent) => void;
+  onResetTemplate: () => void;
+}) {
+  const update = (patch: Partial<ProblemForm>) => onFormChange({ ...form, ...patch });
+
+  return (
+    <form className="panel upload-form" onSubmit={onSubmit}>
+      <div className="panel-title-row">
+        <h2>上傳題目</h2>
+        <button className="ghost-button compact" type="button" onClick={onResetTemplate}>載入第 1 週第 1 題範例</button>
+      </div>
+      <div className="form-grid">
+        <label>Slug<input value={form.slug} onChange={(event) => update({ slug: event.target.value })} placeholder="normalize-scores-template" /></label>
+        <label>週次<input value={form.week} onChange={(event) => update({ week: event.target.value })} /></label>
+        <label>系列名稱<input value={form.seriesTitle} onChange={(event) => update({ seriesTitle: event.target.value })} /></label>
+        <label>題目名稱<input value={form.title} onChange={(event) => update({ title: event.target.value })} /></label>
+        <label>難度
+          <select value={form.difficulty} onChange={(event) => update({ difficulty: event.target.value })}>
+            <option value="1">Easy</option>
+            <option value="2">Medium</option>
+            <option value="3">Hard</option>
+          </select>
+        </label>
+        <label>分類<input value={form.category} onChange={(event) => update({ category: event.target.value })} /></label>
+        <label>作答秒數<input value={form.timeLimitSeconds} onChange={(event) => update({ timeLimitSeconds: event.target.value })} /></label>
+        <label>Function name<input value={form.functionName} onChange={(event) => update({ functionName: event.target.value })} /></label>
+        <label className="wide">Signature<input value={form.signature} onChange={(event) => update({ signature: event.target.value })} placeholder="nums, target" /></label>
+        <label className="wide">題目敘述<textarea value={form.statement} onChange={(event) => update({ statement: event.target.value })} /></label>
+        <label className="wide">Input Format<textarea value={form.inputFormat} onChange={(event) => update({ inputFormat: event.target.value })} /></label>
+        <label className="wide">Output Format<textarea value={form.outputFormat} onChange={(event) => update({ outputFormat: event.target.value })} /></label>
+        <label className="wide">Constraints<textarea value={form.constraintsText} onChange={(event) => update({ constraintsText: event.target.value })} /></label>
+        <label className="wide">Starter Code / 範例 func<textarea className="code-textarea" value={form.starterCode} onChange={(event) => update({ starterCode: event.target.value })} /></label>
+        <label className="wide">測資 JSON<textarea className="code-textarea tall" value={form.testsText} onChange={(event) => update({ testsText: event.target.value })} /></label>
+        <label className="checkbox-row wide">
+          <input type="checkbox" checked={form.isOpen} onChange={(event) => update({ isOpen: event.target.checked })} />
+          建立後立即開放給學生
+        </label>
+      </div>
+      <div className="form-actions">
+        <button className="primary-button" disabled={loading}>建立題目</button>
+      </div>
+    </form>
+  );
+}
+
+function UploadGuide() {
+  return (
+    <aside className="panel upload-guide">
+      <h2>老師上傳題目教學</h2>
+      <ol>
+        <li><strong>Function name：</strong>填學生必須實作的函式名稱，例如第一週第一題使用 <code>normalize_scores</code>。</li>
+        <li><strong>Signature：</strong>填參數順序並用逗號分隔，例如 <code>records</code>。系統會用 <code>normalize_scores(*args)</code> 呼叫。</li>
+        <li><strong>Starter Code：</strong>必須包含同名函式。可以給 <code>pass</code>，也可以給提示版本。</li>
+        <li><strong>測資 args：</strong>一定要是 JSON array，順序對應 signature。第一週第一題只有 <code>records</code> 一個參數，所以 args 會是 <code>[[{"{"}"name":"Amy","score":"91"{"}"}]]</code>。</li>
+        <li><strong>public / hidden：</strong>public 會顯示在 Testcase；hidden 只在 Submit 評分，不會把輸入與答案顯示給學生。</li>
+        <li><strong>comparator：</strong><code>exact</code> 比對完全相同；<code>number</code> 比對數字誤差；<code>deepNumber</code> 比對 list/dict 裡的數字誤差。</li>
+      </ol>
+      <h3>測資 JSON 範例</h3>
+      <pre>{DEFAULT_PROBLEM_FORM.testsText}</pre>
+      <h3>最小 Starter Code</h3>
+      <pre>{`def normalize_scores(records):
+    # TODO: write your solution
+    pass`}</pre>
+    </aside>
   );
 }
 
@@ -1407,12 +1686,35 @@ async function api<T>(path: string, options: RequestInit = {}, token = ""): Prom
   return data as T;
 }
 
+function problemFormToPayload(form: ProblemForm) {
+  const tests = JSON.parse(form.testsText);
+  if (!Array.isArray(tests)) throw new Error("測資 JSON 必須是 array。");
+  return {
+    slug: form.slug,
+    week: Number(form.week),
+    seriesTitle: form.seriesTitle,
+    title: form.title,
+    difficulty: Number(form.difficulty),
+    category: form.category,
+    timeLimitSeconds: Number(form.timeLimitSeconds),
+    functionName: form.functionName,
+    signature: form.signature.split(",").map((item) => item.trim()).filter(Boolean),
+    statement: form.statement,
+    inputFormat: form.inputFormat,
+    outputFormat: form.outputFormat,
+    constraintsText: form.constraintsText,
+    starterCode: form.starterCode,
+    tests,
+    isOpen: form.isOpen
+  };
+}
+
 function buildSampleCases(problem: Problem, inputs: Record<number, string>, outputs: Record<number, string>): SampleCasePayload[] {
   return (problem.publicTests || []).map((test) => {
     const inputText = inputs[test.id] || "[]";
     const outputText = outputs[test.id] || "";
     const args = JSON.parse(inputText);
-    if (!Array.isArray(args)) throw new Error(`${test.name} Input 必須是 JSON array`);
+    if (!Array.isArray(args)) throw new Error(`${test.name} args 必須是 JSON array。`);
     const expected = outputText.trim() ? JSON.parse(outputText) : undefined;
     return {
       id: test.id,
@@ -1421,6 +1723,19 @@ function buildSampleCases(problem: Problem, inputs: Record<number, string>, outp
       ...(outputText.trim() ? { expected, comparator: test.comparator } : {})
     };
   });
+}
+
+function startDocumentDrag(onMove: (event: PointerEvent) => void) {
+  document.body.classList.add("is-resizing");
+  const stop = () => {
+    document.body.classList.remove("is-resizing");
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", stop);
+    window.removeEventListener("pointercancel", stop);
+  };
+  window.addEventListener("pointermove", onMove);
+  window.addEventListener("pointerup", stop);
+  window.addEventListener("pointercancel", stop);
 }
 
 function highlightPython(code: string) {
@@ -1503,25 +1818,6 @@ function highlightPythonCodeChunk(chunk: string) {
   return html + escapeHtml(chunk.slice(lastIndex));
 }
 
-function escapeHtml(value: string) {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
-function isApiError(error: unknown): error is ApiError {
-  return error instanceof Error && "attemptState" in error;
-}
-
-type ApiError = Error & { attemptState?: AttemptState };
-
-function sendAbandonBeacon(attemptId: number, token: string) {
-  const body = new Blob([JSON.stringify({ token })], { type: "application/json" });
-  navigator.sendBeacon(`${API_BASE}/api/attempts/${attemptId}/abandon`, body);
-}
-
 function applyTab(textarea: HTMLTextAreaElement, shiftKey: boolean, onCodeChange: (value: string) => void) {
   const value = textarea.value;
   const start = textarea.selectionStart;
@@ -1563,8 +1859,37 @@ function applyTab(textarea: HTMLTextAreaElement, shiftKey: boolean, onCodeChange
   });
 }
 
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function isApiError(error: unknown): error is ApiError {
+  return error instanceof Error && "attemptState" in error;
+}
+
+type ApiError = Error & { attemptState?: AttemptState };
+
+function sendAbandonBeacon(attemptId: number, token: string) {
+  const body = new Blob([JSON.stringify({ token })], { type: "application/json" });
+  navigator.sendBeacon(`${API_BASE}/api/attempts/${attemptId}/abandon`, body);
+}
+
 function prettyJson(value: unknown) {
   return JSON.stringify(value, null, 2);
+}
+
+function difficultyLabel(value: number) {
+  if (value === 1) return "Easy";
+  if (value === 2) return "Med.";
+  return "Hard";
+}
+
+function formatFunctionCall(signature: string[], args: unknown[]) {
+  return signature.map((name, index) => `${name} = ${JSON.stringify(args[index])}`).join(", ");
 }
 
 function formatDuration(ms: number) {
@@ -1581,7 +1906,65 @@ function formatRuntime(ms: number) {
 }
 
 function readError(error: unknown) {
-  return error instanceof Error ? error.message : "未知錯誤";
+  return error instanceof Error ? cleanText(error.message, error.message) : "發生未知錯誤";
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function isCorruptText(value?: string | null) {
+  if (!value) return false;
+  return /[�\uE000-\uF8FF]|蝚|嚗|摮|雿|憿|銝|隢|甈|鞈|蝑|撌|餃|芷|曆/.test(value);
+}
+
+function cleanText(value: string | null | undefined, fallback: string) {
+  if (!value || isCorruptText(value)) return fallback;
+  return value;
+}
+
+function displayProblemTitle(problem: Problem) {
+  return cleanText(problem.title, titleFromSlug(problem.slug));
+}
+
+function displaySeries(problem: Problem) {
+  return cleanText(problem.seriesTitle, `Week ${problem.week}`);
+}
+
+function displayCategory(problem: Problem) {
+  return cleanText(problem.category, problem.functionName.includes("_") ? titleCase(problem.functionName.split("_")[0]) : "Python");
+}
+
+function displayStatement(problem: Problem) {
+  return cleanText(
+    problem.statement,
+    `Implement ${problem.functionName}(${problem.signature.join(", ")}) in Python. Return the value required by the examples and hidden tests.`
+  );
+}
+
+function displayInputFormat(problem: Problem) {
+  return cleanText(problem.inputFormat, `args follows signature order: ${problem.signature.join(", ")}.`);
+}
+
+function displayOutputFormat(problem: Problem) {
+  return cleanText(problem.outputFormat, "Return a JSON-serializable Python value.");
+}
+
+function displayConstraints(problem: Problem) {
+  return cleanText(problem.constraintsText, "Use pure Python. Match the public examples and hidden tests.");
+}
+
+function titleFromSlug(slug: string) {
+  const stripped = slug.replace(/^week-\d+-\d+-/, "");
+  return titleCase(stripped.replace(/-/g, " "));
+}
+
+function titleCase(value: string) {
+  return value
+    .split(/[\s_/-]+/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
 }
 
 export default App;
