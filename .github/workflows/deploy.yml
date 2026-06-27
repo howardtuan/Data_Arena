@@ -1,0 +1,147 @@
+name: CI/CD
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: data-arena-deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build app
+        run: pnpm build
+
+  deploy:
+    name: Deploy to server
+    runs-on: ubuntu-latest
+    needs: build
+
+    env:
+      SERVER_HOST: ${{ secrets.SERVER_HOST }}
+      SERVER_USER: ${{ secrets.SERVER_USER }}
+      SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+      SERVER_PORT: ${{ secrets.SERVER_PORT }}
+      DEPLOY_BRANCH: ${{ github.ref_name }}
+      DEPLOY_SHA: ${{ github.sha }}
+      DEPLOY_PATH: C:\Users\680-9000\Desktop\Data_Arena
+
+    steps:
+      - name: Validate secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -z "${SERVER_HOST}" ]; then
+            echo "::error::Missing GitHub secret: SERVER_HOST"
+            exit 1
+          fi
+
+          if [ -z "${SERVER_USER}" ]; then
+            echo "::error::Missing GitHub secret: SERVER_USER"
+            exit 1
+          fi
+
+          if [ -z "${SERVER_SSH_KEY}" ]; then
+            echo "::error::Missing GitHub secret: SERVER_SSH_KEY"
+            exit 1
+          fi
+
+      - name: Configure SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+
+          printf '%s\n' "${SERVER_SSH_KEY}" > ~/.ssh/data_arena_deploy_key
+          chmod 600 ~/.ssh/data_arena_deploy_key
+
+          PORT="${SERVER_PORT:-22}"
+          ssh-keyscan -p "${PORT}" -H "${SERVER_HOST}" >> ~/.ssh/known_hosts
+
+      - name: Deploy with Docker Compose
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          PORT="${SERVER_PORT:-22}"
+
+          cat > deploy.ps1 <<'EOF'
+          $ErrorActionPreference = 'Stop'
+
+          $repoPath = '${{ env.DEPLOY_PATH }}'
+          $branch = '${{ env.DEPLOY_BRANCH }}'
+          $sha = '${{ env.DEPLOY_SHA }}'
+
+          Write-Host "Deploying DataArena"
+          Write-Host "Repo path: $repoPath"
+          Write-Host "Branch: $branch"
+          Write-Host "Commit: $sha"
+
+          if (-not (Test-Path -LiteralPath $repoPath)) {
+            throw "Deploy path does not exist: $repoPath"
+          }
+
+          Set-Location -LiteralPath $repoPath
+
+          $currentBranch = (git branch --show-current).Trim()
+          if ($currentBranch -ne $branch) {
+            throw "Server repo is on branch '$currentBranch', but workflow is deploying '$branch'. Switch the server repo branch or adjust the workflow."
+          }
+
+          git fetch origin $branch
+          git pull --ff-only origin $branch
+
+          docker compose up --build -d
+          docker compose ps
+
+          $healthy = $false
+          for ($i = 1; $i -le 30; $i++) {
+            try {
+              $response = Invoke-RestMethod -Uri 'http://localhost:8080/api/health' -TimeoutSec 2
+              if ($response.ok -eq $true) {
+                Write-Host "Health check passed. Problem count: $($response.problemCount)"
+                $healthy = $true
+                break
+              }
+            } catch {
+              Start-Sleep -Seconds 2
+            }
+          }
+
+          if (-not $healthy) {
+            docker compose logs --tail 120
+            throw "Health check failed after deployment."
+          }
+          EOF
+
+          ENCODED_SCRIPT="$(iconv -f UTF-8 -t UTF-16LE deploy.ps1 | base64 -w 0)"
+
+          ssh \
+            -i ~/.ssh/data_arena_deploy_key \
+            -p "${PORT}" \
+            "${SERVER_USER}@${SERVER_HOST}" \
+            "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${ENCODED_SCRIPT}"
