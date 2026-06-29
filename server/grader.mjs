@@ -53,6 +53,7 @@ export async function gradeSubmission({ functionName, code, testCases, publicOnl
         passed: false,
         expected,
         error: execution.error,
+        stdout: execution.stdout,
         message: "執行時發生錯誤"
       });
     }
@@ -62,6 +63,7 @@ export async function gradeSubmission({ functionName, code, testCases, publicOnl
       passed: comparison.passed,
       expected: testCase.comparator === "customOutput" ? undefined : expected,
       actual: execution.result,
+      stdout: execution.stdout,
       message: comparison.message
     });
   });
@@ -78,18 +80,20 @@ export async function gradeSubmission({ functionName, code, testCases, publicOnl
   };
 }
 
-function buildDetail(testCase, { passed, expected, actual, error, message }) {
+function buildDetail(testCase, { passed, expected, actual, error, stdout, message }) {
   const isPublic = testCase.visibility === "public";
+  const shouldRevealValues = isPublic || !passed;
   return {
     id: testCase.id,
     name: testCase.name,
     visibility: testCase.visibility,
     passed,
-    ...(isPublic
+    ...(shouldRevealValues
       ? {
           args: JSON.parse(testCase.args_json),
           ...(expected !== undefined ? { expected } : {}),
           ...(actual !== undefined ? { actual } : {}),
+          ...(stdout ? { stdout } : {}),
           ...(error ? { error } : {})
         }
       : {}),

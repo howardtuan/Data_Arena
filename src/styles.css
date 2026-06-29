@@ -784,25 +784,27 @@ input:disabled {
   font-size: 13px;
 }
 
-.timer-badge {
-  min-width: 82px;
-  min-height: 30px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: #252525;
-  color: var(--muted);
-  font-family: "Cascadia Code", Consolas, "SFMono-Regular", monospace;
-  font-size: 12px;
-  font-weight: 900;
+.submission-code-block {
+  display: grid;
+  gap: 8px;
 }
 
-.timer-badge.active {
-  border-color: rgba(239, 68, 68, 0.55);
-  color: #fecaca;
-  background: var(--red-soft);
+.submission-code-block pre {
+  overflow: auto;
+  margin: 0;
+  border: 1px solid var(--line-soft);
+  border-radius: 7px;
+  background: var(--code);
+  color: #e5e7eb;
+  padding: 12px;
+  font-family: "Cascadia Code", Consolas, "SFMono-Regular", monospace;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.submission-case-list {
+  display: grid;
+  gap: 10px;
 }
 
 .code-panel {
@@ -965,6 +967,26 @@ input:disabled {
   color: #ffffff;
 }
 
+.result-case-tabs {
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--line-soft);
+  padding: 12px 12px 10px;
+}
+
+.result-case-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.result-case-tabs button.passed {
+  color: #86efac;
+}
+
+.result-case-tabs button.failed {
+  color: #fca5a5;
+}
+
 .case-editor {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1059,6 +1081,7 @@ input:disabled {
 .test-pass strong,
 .test-fail strong {
   display: flex;
+  align-items: center;
   gap: 8px;
 }
 
@@ -1083,6 +1106,11 @@ input:disabled {
   margin-top: 8px;
 }
 
+.detail-debug {
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
+
 .case-debug small {
   display: block;
   margin-bottom: 4px;
@@ -1090,15 +1118,40 @@ input:disabled {
   font-weight: 900;
 }
 
+.debug-value {
+  min-width: 0;
+}
+
 .case-debug pre,
+.debug-value pre,
 .error-output {
   overflow: auto;
   margin: 0;
   border-radius: 6px;
-  background: #151515;
+  background: #343434;
   color: #e5e7eb;
-  padding: 8px;
-  font-size: 12px;
+  padding: 10px 12px;
+  font-family: "Cascadia Code", Consolas, "SFMono-Regular", monospace;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.input-debug-value {
+  display: grid;
+  gap: 8px;
+}
+
+.debug-arg {
+  display: grid;
+  gap: 4px;
+}
+
+.debug-arg small {
+  color: #b8c2d2;
+}
+
+.case-detail-card {
+  margin: 10px;
 }
 
 .workspace-empty {

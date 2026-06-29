@@ -65,6 +65,7 @@ type Submission = {
   passedTests: number;
   totalTests: number;
   runtimeMs: number;
+  code?: string;
   details: TestDetail[];
   createdAt: string;
 };
@@ -77,6 +78,7 @@ type TestDetail = {
   args?: unknown[];
   expected?: unknown;
   actual?: unknown;
+  stdout?: string;
   message: string;
   error?: string;
 };
@@ -256,6 +258,8 @@ const COPY = {
       submissionEmpty: "目前還沒有提交紀錄。完成一次 Submit 後，紀錄會顯示在這裡。",
       submissionLoadFailed: "提交紀錄載入失敗，請稍後再試。",
       submissionDetails: "測資結果",
+      submittedCode: "提交程式碼",
+      failedCaseDetails: "錯誤測資",
       submissionHeaders: ["時間", "結果", "分數", "測資", "執行時間"],
       accepted: "通過",
       notAccepted: "未通過",
@@ -270,7 +274,11 @@ const COPY = {
       testResult: "測試結果",
       case: (index: number) => `案例 ${index}`,
       inputArgs: "input args =",
+      input: "Input",
+      stdout: "Stdout",
       output: "output =",
+      outputValue: "Output",
+      expected: "Expected",
       noPublicTests: "這題尚未設定公開範例測資。",
       resultPlaceholder: "Run 或 Submit 後會顯示結果。",
       score: (passed: number, total: number, runtime: number, score: number) => `${passed}/${total} tests · ${runtime}ms · score ${score}`
@@ -441,6 +449,8 @@ const COPY = {
       submissionEmpty: "No submissions yet. Submit once and your record will appear here.",
       submissionLoadFailed: "Could not load submissions. Please try again later.",
       submissionDetails: "Test details",
+      submittedCode: "Submitted code",
+      failedCaseDetails: "Failed cases",
       submissionHeaders: ["Time", "Result", "Score", "Tests", "Runtime"],
       accepted: "Accepted",
       notAccepted: "Not accepted",
@@ -455,7 +465,11 @@ const COPY = {
       testResult: "Test Result",
       case: (index: number) => `Case ${index}`,
       inputArgs: "input args =",
+      input: "Input",
+      stdout: "Stdout",
       output: "output =",
+      outputValue: "Output",
+      expected: "Expected",
       noPublicTests: "This problem has no public sample cases yet.",
       resultPlaceholder: "Results appear after Run or Submit.",
       score: (passed: number, total: number, runtime: number, score: number) => `${passed}/${total} tests · ${runtime}ms · score ${score}`
@@ -1534,6 +1548,7 @@ Output: ${prettyJson(test.expected)}`}</pre>
         </div>
       ) : (
         <SubmissionHistory
+          problem={problem}
           token={token}
           submissions={submissions}
           submissionsState={submissionsState}
@@ -1545,11 +1560,13 @@ Output: ${prettyJson(test.expected)}`}</pre>
 }
 
 function SubmissionHistory({
+  problem,
   token,
   submissions,
   submissionsState,
   copy
 }: {
+  problem: Problem;
   token: string;
   submissions: Submission[];
   submissionsState: "idle" | "loading" | "loaded" | "error";
@@ -1594,13 +1611,29 @@ function SubmissionHistory({
             <span>{formatRuntime(submission.runtimeMs)}</span>
           </summary>
           <div className="submission-details">
-            <h3>{copy.workspace.submissionDetails}</h3>
-            {submission.details.map((detail) => (
-              <article className={detail.passed ? "test-pass" : "test-fail"} key={`${submission.id}-${detail.id}-${detail.name}`}>
-                <strong>{detail.passed ? "✓" : "×"} {detail.name} <span>{detail.visibility}</span></strong>
-                <p>{detail.message}</p>
-              </article>
-            ))}
+            {submission.passed ? (
+              <section className="submission-code-block">
+                <h3>{copy.workspace.submittedCode}</h3>
+                <pre>{submission.code || ""}</pre>
+              </section>
+            ) : (
+              <>
+                <h3>{copy.workspace.failedCaseDetails}</h3>
+                <div className="submission-case-list">
+                  {(submission.details.filter((detail) => !detail.passed).length
+                    ? submission.details.filter((detail) => !detail.passed)
+                    : submission.details
+                  ).map((detail) => (
+                    <CaseExecutionDetails
+                      copy={copy}
+                      detail={detail}
+                      key={`${submission.id}-${detail.id}-${detail.name}`}
+                      problem={problem}
+                    />
+                  ))}
+                </div>
+              </>
+            )}
           </div>
         </details>
       ))}
@@ -1695,53 +1728,77 @@ function TestcasePanel({
 }) {
   const tests = problem.publicTests || [];
   const active = tests.find((test) => test.id === activeCaseId) || tests[0];
+  const [activePanel, setActivePanel] = useState<"testcase" | "result">("testcase");
+
+  useEffect(() => {
+    if (result) setActivePanel("result");
+  }, [result]);
 
   return (
     <section className="leetcode-panel tests-panel">
       <div className="panel-tabs">
-        <button className="panel-tab active">{copy.workspace.testcase}</button>
-        <button className="panel-tab">{copy.workspace.testResult}</button>
-      </div>
-      <div className="case-tabs">
-        {tests.map((test, index) => (
-          <button className={test.id === active?.id ? "active" : ""} key={test.id} onClick={() => onActiveCase(test.id)}>
-            {copy.workspace.case(index + 1)}
-          </button>
-        ))}
+        <button className={activePanel === "testcase" ? "panel-tab active" : "panel-tab"} onClick={() => setActivePanel("testcase")}>
+          {copy.workspace.testcase}
+        </button>
+        <button className={activePanel === "result" ? "panel-tab active" : "panel-tab"} onClick={() => setActivePanel("result")}>
+          {copy.workspace.testResult}
+        </button>
       </div>
 
-      {active ? (
-        <div className="case-editor">
-          <label>
-            {copy.workspace.inputArgs}
-            <textarea
-              className="sample-input taller"
-              value={sampleInputs[active.id] || ""}
-              onChange={(event) => onInputChange(active.id, event.target.value)}
-              spellCheck={false}
-            />
-          </label>
-          <label>
-            {copy.workspace.output}
-            <textarea
-              className="sample-input taller"
-              value={sampleOutputs[active.id] || ""}
-              onChange={(event) => onOutputChange(active.id, event.target.value)}
-              spellCheck={false}
-            />
-          </label>
-        </div>
+      {activePanel === "testcase" ? (
+        <>
+          <div className="case-tabs">
+            {tests.map((test, index) => (
+              <button className={test.id === active?.id ? "active" : ""} key={test.id} onClick={() => onActiveCase(test.id)}>
+                {copy.workspace.case(index + 1)}
+              </button>
+            ))}
+          </div>
+
+          {active ? (
+            <div className="case-editor">
+              <label>
+                {copy.workspace.inputArgs}
+                <textarea
+                  className="sample-input taller"
+                  value={sampleInputs[active.id] || ""}
+                  onChange={(event) => onInputChange(active.id, event.target.value)}
+                  spellCheck={false}
+                />
+              </label>
+              <label>
+                {copy.workspace.output}
+                <textarea
+                  className="sample-input taller"
+                  value={sampleOutputs[active.id] || ""}
+                  onChange={(event) => onOutputChange(active.id, event.target.value)}
+                  spellCheck={false}
+                />
+              </label>
+            </div>
+          ) : (
+            <p className="result-placeholder">{copy.workspace.noPublicTests}</p>
+          )}
+        </>
       ) : (
-        <p className="result-placeholder">{copy.workspace.noPublicTests}</p>
+        <ResultBox result={result} problem={problem} copy={copy} />
       )}
-
-      <ResultBox result={result} copy={copy} />
     </section>
   );
 }
 
-function ResultBox({ result, copy }: { result: GradeResult | null; copy: Copy }) {
+function ResultBox({ result, problem, copy }: { result: GradeResult | null; problem: Problem; copy: Copy }) {
+  const preferredDetailId = result
+    ? (result.details.find((detail) => !detail.passed) || result.details[0])?.id ?? null
+    : null;
+  const [activeDetailId, setActiveDetailId] = useState<number | null>(preferredDetailId);
+
+  useEffect(() => {
+    setActiveDetailId(preferredDetailId);
+  }, [preferredDetailId]);
+
   if (!result) return <p className="result-placeholder">{copy.workspace.resultPlaceholder}</p>;
+  const activeDetail = result.details.find((detail) => detail.id === activeDetailId) || result.details[0];
 
   return (
     <section className="result-box">
@@ -1749,31 +1806,66 @@ function ResultBox({ result, copy }: { result: GradeResult | null; copy: Copy })
         <strong>{result.passed ? "Accepted" : "Wrong Answer"}</strong>
         <span>{copy.workspace.score(result.passedTests, result.totalTests, result.runtimeMs, result.score)}</span>
       </div>
-      <div className="result-list">
-        {result.details.map((detail) => (
-          <article className={detail.passed ? "test-pass" : "test-fail"} key={`${detail.id}-${detail.name}`}>
-            <strong>{detail.passed ? "✓" : "×"} {detail.name} <span>{detail.visibility}</span></strong>
-            <p>{detail.message}</p>
-            {(detail.args !== undefined || detail.expected !== undefined || detail.actual !== undefined) && (
-              <div className="case-debug">
-                {detail.args !== undefined && <DebugValue label="args" value={detail.args} />}
-                {detail.expected !== undefined && <DebugValue label="expected" value={detail.expected} />}
-                {detail.actual !== undefined && <DebugValue label="actual" value={detail.actual} />}
-              </div>
-            )}
-            {detail.error && <pre className="error-output">{detail.error}</pre>}
-          </article>
+      <div className="case-tabs result-case-tabs">
+        {result.details.map((detail, index) => (
+          <button
+            className={`${detail.id === activeDetail?.id ? "active" : ""} ${detail.passed ? "passed" : "failed"}`}
+            key={`${detail.id}-${detail.name}`}
+            onClick={() => setActiveDetailId(detail.id)}
+          >
+            {detail.passed ? "✓" : "×"} {copy.workspace.case(index + 1)}
+          </button>
         ))}
       </div>
+      {activeDetail && <CaseExecutionDetails detail={activeDetail} problem={problem} copy={copy} />}
     </section>
+  );
+}
+
+function CaseExecutionDetails({ detail, problem, copy }: { detail: TestDetail; problem: Problem; copy: Copy }) {
+  return (
+    <article className={detail.passed ? "test-pass case-detail-card" : "test-fail case-detail-card"}>
+      <strong>{detail.passed ? "✓" : "×"} {detail.name} <span>{detail.visibility}</span></strong>
+      <p>{detail.message}</p>
+      <div className="case-debug detail-debug">
+        {detail.args !== undefined && <InputDebugValue args={detail.args} copy={copy} signature={problem.signature} />}
+        {detail.stdout?.trim() && <DebugTextValue label={copy.workspace.stdout} value={detail.stdout} />}
+        {detail.actual !== undefined && <DebugValue label={copy.workspace.outputValue} value={detail.actual} />}
+        {detail.expected !== undefined && <DebugValue label={copy.workspace.expected} value={detail.expected} />}
+      </div>
+      {detail.error && <DebugTextValue label="Error" value={detail.error} />}
+    </article>
+  );
+}
+
+function InputDebugValue({ args, copy, signature }: { args: unknown[]; copy: Copy; signature: string[] }) {
+  return (
+    <div className="debug-value input-debug-value">
+      <small>{copy.workspace.input}</small>
+      {args.map((value, index) => (
+        <div className="debug-arg" key={`${signature[index] || "arg"}-${index}`}>
+          <small>{signature[index] || `arg${index + 1}`} =</small>
+          <pre>{prettyJson(value)}</pre>
+        </div>
+      ))}
+    </div>
   );
 }
 
 function DebugValue({ label, value }: { label: string; value: unknown }) {
   return (
-    <div>
+    <div className="debug-value">
       <small>{label}</small>
       <pre>{prettyJson(value)}</pre>
+    </div>
+  );
+}
+
+function DebugTextValue({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="debug-value">
+      <small>{label}</small>
+      <pre>{value.trimEnd()}</pre>
     </div>
   );
 }

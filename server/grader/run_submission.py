@@ -1,4 +1,6 @@
 import ast
+import contextlib
+import io
 import json
 import math
 import statistics
@@ -83,20 +85,26 @@ def main():
         "math": math,
         "statistics": statistics,
     }
-    exec(compile(tree, "<submission>", "exec"), namespace)
+    setup_stdout = io.StringIO()
+    with contextlib.redirect_stdout(setup_stdout):
+        exec(compile(tree, "<submission>", "exec"), namespace)
     target = namespace.get(function_name)
     if not callable(target):
         raise ValueError(f"找不到可呼叫函式 {function_name}()")
 
     results = []
+    pending_setup_stdout = setup_stdout.getvalue()
     for test_case in test_cases:
+        case_stdout = io.StringIO()
         try:
-            result = target(*test_case["args"])
+            with contextlib.redirect_stdout(case_stdout):
+                result = target(*test_case["args"])
             results.append(
                 {
                     "id": test_case["id"],
                     "ok": True,
                     "result": to_jsonable(result),
+                    "stdout": limit_stdout(pending_setup_stdout + case_stdout.getvalue()),
                 }
             )
         except Exception as exc:
@@ -105,10 +113,18 @@ def main():
                     "id": test_case["id"],
                     "ok": False,
                     "error": f"{exc.__class__.__name__}: {exc}",
+                    "stdout": limit_stdout(pending_setup_stdout + case_stdout.getvalue()),
                 }
             )
+        pending_setup_stdout = ""
 
     print(json.dumps({"ok": True, "results": results}, ensure_ascii=True))
+
+
+def limit_stdout(value):
+    if len(value) <= 20000:
+        return value
+    return value[:20000] + "\n...[stdout truncated]"
 
 
 if __name__ == "__main__":

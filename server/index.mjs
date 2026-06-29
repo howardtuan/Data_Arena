@@ -1073,6 +1073,7 @@ function publicSubmission(row) {
     passedTests: row.passed_tests,
     totalTests: row.total_tests,
     runtimeMs: row.runtime_ms,
+    code: row.code,
     details: JSON.parse(row.details_json),
     createdAt: row.created_at
   };
