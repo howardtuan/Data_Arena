@@ -6,6 +6,7 @@ import { config } from "./config.mjs";
 import { buildProblemBank } from "./problem-bank.mjs";
 
 let db;
+const PROBLEM_BANK_VERSION = "2026-06-data-mining-difficulty-v2";
 
 export function getDb() {
   if (!db) {
@@ -52,16 +53,23 @@ function migrate(database) {
       slug TEXT NOT NULL UNIQUE,
       week INTEGER NOT NULL,
       series_title TEXT NOT NULL,
+      series_title_en TEXT NOT NULL DEFAULT '',
       title TEXT NOT NULL,
+      title_en TEXT NOT NULL DEFAULT '',
       difficulty INTEGER NOT NULL CHECK (difficulty BETWEEN 1 AND 3),
       category TEXT NOT NULL,
+      category_en TEXT NOT NULL DEFAULT '',
       time_limit_seconds INTEGER NOT NULL,
       function_name TEXT NOT NULL,
       signature_json TEXT NOT NULL,
       statement TEXT NOT NULL,
+      statement_en TEXT NOT NULL DEFAULT '',
       input_format TEXT NOT NULL,
+      input_format_en TEXT NOT NULL DEFAULT '',
       output_format TEXT NOT NULL,
+      output_format_en TEXT NOT NULL DEFAULT '',
       constraints_text TEXT NOT NULL,
+      constraints_text_en TEXT NOT NULL DEFAULT '',
       starter_code TEXT NOT NULL,
       is_open INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -107,12 +115,24 @@ function migrate(database) {
       end_reason TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS app_meta (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_problems_week ON problems(week);
     CREATE INDEX IF NOT EXISTS idx_submissions_user_problem ON submissions(user_id, problem_id);
     CREATE INDEX IF NOT EXISTS idx_submissions_problem_score ON submissions(problem_id, score DESC, runtime_ms ASC);
     CREATE INDEX IF NOT EXISTS idx_attempts_user_problem_day ON attempts(user_id, problem_id, day_key);
     CREATE INDEX IF NOT EXISTS idx_attempts_status_expires ON attempts(status, expires_at);
   `);
+  ensureColumn(database, "problems", "series_title_en", "series_title_en TEXT NOT NULL DEFAULT ''");
+  ensureColumn(database, "problems", "title_en", "title_en TEXT NOT NULL DEFAULT ''");
+  ensureColumn(database, "problems", "category_en", "category_en TEXT NOT NULL DEFAULT ''");
+  ensureColumn(database, "problems", "statement_en", "statement_en TEXT NOT NULL DEFAULT ''");
+  ensureColumn(database, "problems", "input_format_en", "input_format_en TEXT NOT NULL DEFAULT ''");
+  ensureColumn(database, "problems", "output_format_en", "output_format_en TEXT NOT NULL DEFAULT ''");
+  ensureColumn(database, "problems", "constraints_text_en", "constraints_text_en TEXT NOT NULL DEFAULT ''");
   ensureColumn(database, "attempts", "focus_violations", "focus_violations INTEGER NOT NULL DEFAULT 0");
 }
 
@@ -127,7 +147,6 @@ function seed(database) {
   seedAdmin(database);
   seedSampleStudent(database);
   seedProblems(database);
-  makeAllTestCasesPublic(database);
 }
 
 function seedAdmin(database) {
@@ -168,31 +187,40 @@ function seedSampleStudent(database) {
     });
 }
 
-function makeAllTestCasesPublic(database) {
-  database
-    .prepare(
-      `UPDATE test_cases
-       SET visibility = 'public',
-           name = REPLACE(name, 'Hidden', 'Test')
-       WHERE visibility <> 'public' OR name LIKE 'Hidden%'`
-    )
-    .run();
+function seedProblems(database) {
+  const currentVersion = database
+    .prepare("SELECT value FROM app_meta WHERE key = 'problem_bank_version'")
+    .get()?.value;
+  const problemCount = database.prepare("SELECT COUNT(*) AS count FROM problems").get().count;
+  if (currentVersion === PROBLEM_BANK_VERSION && problemCount > 0) return;
+
+  const submissionCount = database.prepare("SELECT COUNT(*) AS count FROM submissions").get().count;
+  if (submissionCount > 0 && problemCount > 0) {
+    console.warn(
+      `Problem bank version ${PROBLEM_BANK_VERSION} is available, but existing submissions were found. ` +
+        "Skipping automatic destructive replacement; run reset-db when you are ready to reseed."
+    );
+    return;
+  }
+
+  replaceProblemBank(database);
 }
 
-function seedProblems(database) {
-  const count = database.prepare("SELECT COUNT(*) AS count FROM problems").get().count;
-  if (count > 0) return;
-
+function replaceProblemBank(database) {
   const insertProblem = database.prepare(`
     INSERT INTO problems (
       slug, week, series_title, title, difficulty, category, time_limit_seconds,
-      function_name, signature_json, statement, input_format, output_format,
-      constraints_text, starter_code, is_open
+      series_title_en, title_en, category_en,
+      function_name, signature_json, statement, statement_en, input_format, input_format_en,
+      output_format, output_format_en, constraints_text, constraints_text_en,
+      starter_code, is_open
     )
     VALUES (
       @slug, @week, @seriesTitle, @title, @difficulty, @category, @timeLimitSeconds,
-      @functionName, @signatureJson, @statement, @inputFormat, @outputFormat,
-      @constraintsText, @starterCode, 1
+      @seriesTitleEn, @titleEn, @categoryEn,
+      @functionName, @signatureJson, @statement, @statementEn, @inputFormat, @inputFormatEn,
+      @outputFormat, @outputFormatEn, @constraintsText, @constraintsTextEn,
+      @starterCode, 1
     )
   `);
   const insertCase = database.prepare(`
@@ -201,6 +229,11 @@ function seedProblems(database) {
   `);
 
   const transaction = database.transaction((problems) => {
+    database.prepare("DELETE FROM attempts").run();
+    database.prepare("DELETE FROM submissions").run();
+    database.prepare("DELETE FROM test_cases").run();
+    database.prepare("DELETE FROM problems").run();
+
     for (const problem of problems) {
       const result = insertProblem.run({
         ...problem,
@@ -219,6 +252,14 @@ function seedProblems(database) {
         });
       }
     }
+
+    database
+      .prepare(
+        `INSERT INTO app_meta (key, value)
+         VALUES ('problem_bank_version', @version)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+      )
+      .run({ version: PROBLEM_BANK_VERSION });
   });
 
   transaction(buildProblemBank());

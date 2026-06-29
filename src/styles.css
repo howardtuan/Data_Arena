@@ -139,6 +139,23 @@ input:disabled {
   background: #323232;
 }
 
+.language-toggle {
+  min-width: 42px;
+  min-height: 30px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #303030;
+  color: #ffffff;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.language-toggle:hover {
+  border-color: #5a5a5a;
+  background: #383838;
+}
+
 .nav,
 .account-area,
 .toolbar-actions,
@@ -438,7 +455,7 @@ input:disabled {
 }
 
 .difficulty.d1 {
-  color: #2dd4bf;
+  color: #22c55e;
 }
 
 .difficulty.d2 {
@@ -685,6 +702,86 @@ input:disabled {
 
 .statement-section {
   margin-top: 28px;
+}
+
+.submission-empty {
+  padding: 28px 18px;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.submission-history {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+}
+
+.submission-header-row,
+.submission-row summary {
+  display: grid;
+  grid-template-columns: minmax(120px, 1.5fr) minmax(78px, 0.9fr) 56px 58px 78px;
+  align-items: center;
+  gap: 10px;
+}
+
+.submission-header-row {
+  color: var(--faint);
+  padding: 0 12px 4px;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.submission-row {
+  border: 1px solid var(--line-soft);
+  border-radius: 7px;
+  background: #282828;
+}
+
+.submission-row summary {
+  min-height: 42px;
+  padding: 0 12px;
+  color: #e5e7eb;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 800;
+  list-style: none;
+}
+
+.submission-row summary::-webkit-details-marker {
+  display: none;
+}
+
+.submission-row summary span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.submission-result {
+  color: var(--muted);
+}
+
+.submission-result.accepted {
+  color: var(--green);
+}
+
+.submission-result.failed {
+  color: var(--red);
+}
+
+.submission-details {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid var(--line-soft);
+  padding: 12px;
+}
+
+.submission-details h3 {
+  margin: 0;
+  color: #ffffff;
+  font-size: 13px;
 }
 
 .timer-badge {
@@ -1325,6 +1422,12 @@ input:disabled {
   grid-column: 1 / -1;
 }
 
+.test-case-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
 .upload-form textarea {
   min-height: 92px;
   resize: vertical;
@@ -1544,6 +1647,7 @@ input:disabled {
   .case-debug,
   .auth-card,
   .form-grid,
+  .test-case-grid,
   .admin-row {
     grid-template-columns: 1fr;
   }

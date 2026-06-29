@@ -102,6 +102,22 @@ app.get("/api/problems/:slug", optionalAuth, (req, res) => {
   });
 });
 
+app.get("/api/problems/:slug/submissions", requireAuth, (req, res) => {
+  const problem = getProblemBySlug(req.params.slug);
+  if (!problem) return res.status(404).json({ error: "找不到題目" });
+  if (!canSeeProblem(req.user, problem)) return res.status(404).json({ error: "找不到題目" });
+  const submissions = db
+    .prepare(
+      `SELECT *
+       FROM submissions
+       WHERE user_id = ? AND problem_id = ?
+       ORDER BY created_at DESC
+       LIMIT 50`
+    )
+    .all(req.user.id, problem.id);
+  res.json({ submissions: submissions.map(publicSubmission) });
+});
+
 app.get("/api/leaderboard", (_req, res) => {
   res.json(buildGlobalLeaderboard());
 });
@@ -211,7 +227,6 @@ app.post("/api/problems/:slug/run", requireAuth, async (req, res, next) => {
     if (!canSeeProblem(req.user, problem)) return res.status(404).json({ error: "找不到題目" });
     const code = String(req.body?.code || "");
     if (!code.trim()) return res.status(400).json({ error: "請提交程式碼" });
-    const attempt = requireActiveAttempt(req, problem);
     const testCases = buildRunnableTestCases(problem.id, req.body?.sampleCases);
     const result = await gradeSubmission({
       functionName: problem.function_name,
@@ -219,7 +234,7 @@ app.post("/api/problems/:slug/run", requireAuth, async (req, res, next) => {
       testCases,
       publicOnly: false
     });
-    res.json({ result, attempt: publicAttempt(attempt) });
+    res.json({ result });
   } catch (error) {
     next(error);
   }
@@ -235,14 +250,6 @@ app.post("/api/problems/:slug/submit", requireAuth, async (req, res, next) => {
     if (!canSeeProblem(req.user, problem)) return res.status(404).json({ error: "找不到題目" });
     const code = String(req.body?.code || "");
     if (!code.trim()) return res.status(400).json({ error: "請提交程式碼" });
-    const attempt = requireActiveAttempt(req, problem);
-    const state = getAttemptState(req.user.id, problem);
-    if (state.remainingAttempts <= 0) {
-      return res.status(429).json({
-        error: `今日本題 submit ${DAILY_ATTEMPT_LIMIT} 次已用完，請等午夜重置`,
-        attemptState: state
-      });
-    }
     const testCases = getTestCases(problem.id);
     const result = await gradeSubmission({
       functionName: problem.function_name,
@@ -269,18 +276,9 @@ app.post("/api/problems/:slug/submit", requireAuth, async (req, res, next) => {
         JSON.stringify(result.details)
       );
 
-    endAttempt(
-      attempt.id,
-      result.passed ? "passed" : "failed",
-      result.score,
-      saved.lastInsertRowid,
-      result.passed ? "提交通過" : "提交未通過"
-    );
-
     res.status(201).json({
       result,
-      submission: publicSubmission(getSubmissionById(saved.lastInsertRowid)),
-      attempt: publicAttempt(getAttemptById(attempt.id))
+      submission: publicSubmission(getSubmissionById(saved.lastInsertRowid))
     });
   } catch (error) {
     next(error);
@@ -294,6 +292,7 @@ app.get("/api/me/progress", requireAuth, (req, res) => {
         p.id,
         p.slug,
         p.title,
+        p.title_en,
         p.week,
         COUNT(s.id) AS submissions,
         MAX(s.score) AS best_score,
@@ -367,13 +366,17 @@ app.post("/api/admin/problems", requireAdmin, (req, res) => {
       .prepare(
         `INSERT INTO problems (
           slug, week, series_title, title, difficulty, category, time_limit_seconds,
-          function_name, signature_json, statement, input_format, output_format,
-          constraints_text, starter_code, is_open
+          series_title_en, title_en, category_en,
+          function_name, signature_json, statement, statement_en, input_format, input_format_en,
+          output_format, output_format_en, constraints_text, constraints_text_en,
+          starter_code, is_open
         )
         VALUES (
           @slug, @week, @seriesTitle, @title, @difficulty, @category, @timeLimitSeconds,
-          @functionName, @signatureJson, @statement, @inputFormat, @outputFormat,
-          @constraintsText, @starterCode, @isOpen
+          @seriesTitleEn, @titleEn, @categoryEn,
+          @functionName, @signatureJson, @statement, @statementEn, @inputFormat, @inputFormatEn,
+          @outputFormat, @outputFormatEn, @constraintsText, @constraintsTextEn,
+          @starterCode, @isOpen
         )`
       )
       .run({
@@ -563,16 +566,23 @@ function publicProblem(row) {
     slug: row.slug,
     week: row.week,
     seriesTitle: row.series_title,
+    seriesTitleEn: row.series_title_en || "",
     title: row.title,
+    titleEn: row.title_en || "",
     difficulty: row.difficulty,
     category: row.category,
+    categoryEn: row.category_en || "",
     timeLimitSeconds: row.time_limit_seconds,
     functionName: row.function_name,
     signature: JSON.parse(row.signature_json),
     statement: row.statement,
+    statementEn: row.statement_en || "",
     inputFormat: row.input_format,
+    inputFormatEn: row.input_format_en || "",
     outputFormat: row.output_format,
+    outputFormatEn: row.output_format_en || "",
     constraintsText: row.constraints_text,
+    constraintsTextEn: row.constraints_text_en || "",
     starterCode: row.starter_code,
     isOpen: Boolean(row.is_open)
   };
@@ -594,6 +604,19 @@ function normalizeProblemPayload(body) {
   const difficulty = Number(body.difficulty);
   const timeLimitSeconds = Number(body.timeLimitSeconds || body.time_limit_seconds || 1800);
   const title = String(body.title || "").trim();
+  const titleEn = String(body.titleEn || body.title_en || "").trim();
+  const seriesTitle = String(body.seriesTitle || `Week ${week}`).trim();
+  const seriesTitleEn = String(body.seriesTitleEn || body.series_title_en || "").trim();
+  const category = String(body.category || "Python").trim();
+  const categoryEn = String(body.categoryEn || body.category_en || "").trim();
+  const statement = String(body.statement || "").trim();
+  const statementEn = String(body.statementEn || body.statement_en || "").trim();
+  const inputFormat = String(body.inputFormat || body.input_format || "").trim();
+  const inputFormatEn = String(body.inputFormatEn || body.input_format_en || "").trim();
+  const outputFormat = String(body.outputFormat || body.output_format || "").trim();
+  const outputFormatEn = String(body.outputFormatEn || body.output_format_en || "").trim();
+  const constraintsText = String(body.constraintsText || body.constraints_text || "").trim();
+  const constraintsTextEn = String(body.constraintsTextEn || body.constraints_text_en || "").trim();
   const functionName = String(body.functionName || "").trim();
   const signature = Array.isArray(body.signature)
     ? body.signature.map((item) => String(item).trim()).filter(Boolean)
@@ -605,10 +628,17 @@ function normalizeProblemPayload(body) {
 
   if (!Number.isInteger(week) || week < 1 || week > 99) errors.push("週次必須是 1 到 99 的整數");
   if (!title) errors.push("請填寫題目標題");
-  if (!String(body.statement || "").trim()) errors.push("請填寫題目敘述");
-  if (!String(body.inputFormat || "").trim()) errors.push("請填寫輸入格式");
-  if (!String(body.outputFormat || "").trim()) errors.push("請填寫輸出格式");
-  if (!String(body.constraintsText || "").trim()) errors.push("請填寫限制條件");
+  if (!titleEn) errors.push("請填寫英文題目標題");
+  if (!seriesTitleEn) errors.push("請填寫英文系列名稱");
+  if (!categoryEn) errors.push("請填寫英文分類");
+  if (!statement) errors.push("請填寫題目敘述");
+  if (!statementEn) errors.push("請填寫英文題目敘述");
+  if (!inputFormat) errors.push("請填寫輸入格式");
+  if (!inputFormatEn) errors.push("請填寫英文輸入格式");
+  if (!outputFormat) errors.push("請填寫輸出格式");
+  if (!outputFormatEn) errors.push("請填寫英文輸出格式");
+  if (!constraintsText) errors.push("請填寫限制條件");
+  if (!constraintsTextEn) errors.push("請填寫英文限制條件");
   if (!Number.isInteger(difficulty) || difficulty < 1 || difficulty > 3) errors.push("難度必須是 1、2 或 3");
   if (!/^[A-Za-z_]\w*$/.test(functionName)) errors.push("函式名稱只能使用 Python identifier，例如 two_sum");
   if (signature.length === 0) errors.push("至少需要一個函式參數");
@@ -624,6 +654,9 @@ function normalizeProblemPayload(body) {
   if (!normalizedTests.some((testCase) => testCase.visibility === "public")) {
     errors.push("至少需要一筆 public 測資，學生才會看到範例測資");
   }
+  if (!normalizedTests.some((testCase) => testCase.visibility === "hidden")) {
+    errors.push("至少需要一筆 hidden 測資，Submit 才能進行隱藏評分");
+  }
 
   const slugBase = String(body.slug || "").trim() || `${week}-${title}`;
   const slug = uniqueSlug(slugify(slugBase));
@@ -636,17 +669,24 @@ function normalizeProblemPayload(body) {
     problem: {
       slug,
       week,
-      seriesTitle: String(body.seriesTitle || `Week ${week}`).trim(),
+      seriesTitle,
+      seriesTitleEn,
       title,
+      titleEn,
       difficulty,
-      category: String(body.category || "Python").trim(),
+      category,
+      categoryEn,
       timeLimitSeconds,
       functionName,
       signature,
-      statement: String(body.statement || "").trim(),
-      inputFormat: String(body.inputFormat || "").trim(),
-      outputFormat: String(body.outputFormat || "").trim(),
-      constraintsText: String(body.constraintsText || "").trim(),
+      statement,
+      statementEn,
+      inputFormat,
+      inputFormatEn,
+      outputFormat,
+      outputFormatEn,
+      constraintsText,
+      constraintsTextEn,
       starterCode,
       isOpen: body.isOpen !== false,
       tests: normalizedTests
@@ -849,14 +889,44 @@ function buildGlobalLeaderboard() {
 
   const explanation = {
     title: "全站排行榜計算方式",
+    titleEn: "How the Global Leaderboard Is Calculated",
     summary: "排行榜不是單題排名，而是把全部題目的題目排名取平均，形成全站平均題目排名。平均題目排名越小，總榜越前面。",
+    summaryEn:
+      "The leaderboard is not based on one problem. It averages each student's per-problem rank across all open problems. A lower average rank means a higher global rank.",
     perProblemScore:
       "每題先計算題目分：最佳通過率 70% + 時間效率 15% + submit 次數效率 10% + 失敗次數效率 5%。",
+    perProblemScoreEn:
+      "Each problem first receives a problem score: best score 70% + time efficiency 15% + submit efficiency 10% + failure efficiency 5%.",
     ranking:
-      "每題依題目分排序得到該題排名；未提交該題會排在該題最後。總榜依 50 題平均題目排名排序。",
+      "每題依題目分排序得到該題排名；未提交該題會排在該題最後。總榜依所有開放題目的平均題目排名排序。",
+    rankingEn:
+      "Each problem is ranked by problem score. Students who did not submit a problem rank last for that problem. The global board sorts by average rank across all open problems.",
     tieBreakers:
-      "平均題目排名相同時，依序比較解題數、平均題目分、總執行時間、總 submit 次數、總失敗次數。"
+      "平均題目排名相同時，依序比較解題數、平均題目分、總執行時間、總 submit 次數、總失敗次數。",
+    tieBreakersEn:
+      "If average rank ties, compare solved problems, average problem score, total runtime, total submissions, and total failures in order."
   };
+
+  Object.assign(explanation, {
+    title: "排行榜計算方式",
+    titleEn: "How the Global Leaderboard Is Calculated",
+    summary:
+      "排行榜會先計算每位學生在每題的題目分，再取所有開放題目的平均排名。平均排名越低，總排名越前面。",
+    summaryEn:
+      "The leaderboard first computes each student's per-problem score, then averages ranks across all open problems. A lower average rank means a higher global rank.",
+    perProblemScore:
+      "每題題目分 = 最佳通過率 80% + submit 次數效率 15% + 失敗次數效率 5%。作答時間不納入計分。",
+    perProblemScoreEn:
+      "Each problem score = best score 80% + submit efficiency 15% + failure efficiency 5%. Solving time is not part of scoring.",
+    ranking:
+      "每題依題目分排名；未提交該題的學生排在該題最後。總榜依所有開放題目的平均排名排序。",
+    rankingEn:
+      "Each problem is ranked by problem score. Students who did not submit a problem rank last for that problem. The global board sorts by average rank across all open problems.",
+    tieBreakers:
+      "平均題目排名相同時，依序比較解題數、平均題目分、總 submit 次數與總失敗次數。",
+    tieBreakersEn:
+      "If average rank ties, compare solved problems, average problem score, total submissions, and total failures in order."
+  });
 
   if (students.length === 0 || problems.length === 0) {
     return { leaderboard: [], explanation, problemCount: problems.length };
@@ -887,12 +957,6 @@ function buildGlobalLeaderboard() {
   );
 
   for (const problem of problems) {
-    const problemSubmissions = submissions.filter((submission) => submission.problem_id === problem.id);
-    const fastestRuntime = problemSubmissions.reduce((fastest, submission) => {
-      if (!submission.runtime_ms) return fastest;
-      return Math.min(fastest, submission.runtime_ms);
-    }, Number.POSITIVE_INFINITY);
-
     const standings = students.map((student) => {
       const userSubmissions = submissionsByKey.get(`${student.id}:${problem.id}`) || [];
       const submitCount = userSubmissions.length;
@@ -904,12 +968,9 @@ function buildGlobalLeaderboard() {
             .reduce((best, submission) => Math.min(best, submission.runtime_ms || Number.POSITIVE_INFINITY), Number.POSITIVE_INFINITY)
         : Number.POSITIVE_INFINITY;
       const solved = userSubmissions.some((submission) => Boolean(submission.passed));
-      const timeScore = Number.isFinite(bestRuntime) && Number.isFinite(fastestRuntime) && fastestRuntime > 0
-        ? 15 * (fastestRuntime / bestRuntime)
-        : 0;
-      const submitEfficiency = submitCount ? 10 / submitCount : 0;
+      const submitEfficiency = submitCount ? 15 / submitCount : 0;
       const failureEfficiency = submitCount ? 5 / (failCount + 1) : 0;
-      const problemScore = submitCount ? bestScore * 0.7 + timeScore + submitEfficiency + failureEfficiency : 0;
+      const problemScore = submitCount ? bestScore * 0.8 + submitEfficiency + failureEfficiency : 0;
       return {
         userId: student.id,
         submitCount,
@@ -924,7 +985,6 @@ function buildGlobalLeaderboard() {
     standings.sort((a, b) => {
       if (b.problemScore !== a.problemScore) return b.problemScore - a.problemScore;
       if (b.bestScore !== a.bestScore) return b.bestScore - a.bestScore;
-      if (a.bestRuntime !== b.bestRuntime) return a.bestRuntime - b.bestRuntime;
       if (a.failCount !== b.failCount) return a.failCount - b.failCount;
       if (a.submitCount !== b.submitCount) return a.submitCount - b.submitCount;
       return a.userId - b.userId;
@@ -953,7 +1013,6 @@ function buildGlobalLeaderboard() {
       if (a.averageRank !== b.averageRank) return a.averageRank - b.averageRank;
       if (b.solvedProblems !== a.solvedProblems) return b.solvedProblems - a.solvedProblems;
       if (b.averageProblemScore !== a.averageProblemScore) return b.averageProblemScore - a.averageProblemScore;
-      if (a.totalRuntimeMs !== b.totalRuntimeMs) return a.totalRuntimeMs - b.totalRuntimeMs;
       if (a.totalSubmissions !== b.totalSubmissions) return a.totalSubmissions - b.totalSubmissions;
       if (a.totalFailures !== b.totalFailures) return a.totalFailures - b.totalFailures;
       return a.name.localeCompare(b.name);
