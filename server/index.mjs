@@ -93,10 +93,12 @@ app.get("/api/problems/:slug", optionalAuth, (req, res) => {
   if (!canSeeProblem(req.user, problem)) return res.status(404).json({ error: "找不到題目" });
   const publicTests = getTestCases(problem.id, "public").slice(0, 2);
   const best = req.user ? getBestSubmission(req.user.id, problem.id) : null;
+  const savedCode = req.user ? getSavedCode(req.user.id, problem.id) : null;
   res.json({
     problem: {
       ...publicProblem(problem),
       publicTests: publicTests.map(publicTestCase),
+      savedCode: savedCode?.code ?? null,
       bestSubmission: best ? publicSubmission(best) : null
     }
   });
@@ -227,6 +229,7 @@ app.post("/api/problems/:slug/run", requireAuth, async (req, res, next) => {
     if (!canSeeProblem(req.user, problem)) return res.status(404).json({ error: "找不到題目" });
     const code = String(req.body?.code || "");
     if (!code.trim()) return res.status(400).json({ error: "請提交程式碼" });
+    saveProblemCode(req.user.id, problem.id, code, "run");
     const testCases = buildRunnableTestCases(problem.id, req.body?.sampleCases);
     const result = await gradeSubmission({
       functionName: problem.function_name,
@@ -250,6 +253,7 @@ app.post("/api/problems/:slug/submit", requireAuth, async (req, res, next) => {
     if (!canSeeProblem(req.user, problem)) return res.status(404).json({ error: "找不到題目" });
     const code = String(req.body?.code || "");
     if (!code.trim()) return res.status(400).json({ error: "請提交程式碼" });
+    saveProblemCode(req.user.id, problem.id, code, "submit");
     const testCases = getTestCases(problem.id);
     const result = await gradeSubmission({
       functionName: problem.function_name,
@@ -1059,6 +1063,29 @@ function getBestSubmission(userId, problemId) {
        LIMIT 1`
     )
     .get(userId, problemId);
+}
+
+function getSavedCode(userId, problemId) {
+  return db
+    .prepare(
+      `SELECT code, last_action, updated_at
+       FROM saved_codes
+       WHERE user_id = ? AND problem_id = ?`
+    )
+    .get(userId, problemId);
+}
+
+function saveProblemCode(userId, problemId, code, lastAction) {
+  db
+    .prepare(
+      `INSERT INTO saved_codes (user_id, problem_id, code, last_action)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(user_id, problem_id) DO UPDATE SET
+         code = excluded.code,
+         last_action = excluded.last_action,
+         updated_at = CURRENT_TIMESTAMP`
+    )
+    .run(userId, problemId, code, lastAction);
 }
 
 function getSubmissionById(id) {

@@ -945,7 +945,12 @@ input:disabled {
 
 .tests-panel {
   display: grid;
-  grid-template-rows: auto auto auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.tests-content {
   min-height: 0;
   overflow-y: auto;
 }
@@ -1036,7 +1041,7 @@ input:disabled {
 
 .result-box {
   margin: 0 18px 18px;
-  overflow: hidden;
+  overflow: visible;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #202020;

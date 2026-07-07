@@ -51,6 +51,7 @@ type Problem = {
   constraintsText: string;
   constraintsTextEn?: string;
   starterCode: string;
+  savedCode?: string | null;
   isOpen: boolean;
   bestScore?: number | null;
   submissions?: number;
@@ -740,7 +741,7 @@ function App() {
     try {
       const response = await api<{ problem: Problem }>(`/api/problems/${slug}`, {}, token);
       setSelectedProblem(response.problem);
-      setCode(response.problem.starterCode);
+      setCode(response.problem.savedCode ?? response.problem.starterCode);
       setRunResult(null);
       setSampleInputs(Object.fromEntries((response.problem.publicTests || []).map((test) => [test.id, prettyJson(test.args)])));
       setSampleOutputs(Object.fromEntries((response.problem.publicTests || []).map((test) => [test.id, prettyJson(test.expected)])));
@@ -1745,44 +1746,46 @@ function TestcasePanel({
         </button>
       </div>
 
-      {activePanel === "testcase" ? (
-        <>
-          <div className="case-tabs">
-            {tests.map((test, index) => (
-              <button className={test.id === active?.id ? "active" : ""} key={test.id} onClick={() => onActiveCase(test.id)}>
-                {copy.workspace.case(index + 1)}
-              </button>
-            ))}
-          </div>
-
-          {active ? (
-            <div className="case-editor">
-              <label>
-                {copy.workspace.inputArgs}
-                <textarea
-                  className="sample-input taller"
-                  value={sampleInputs[active.id] || ""}
-                  onChange={(event) => onInputChange(active.id, event.target.value)}
-                  spellCheck={false}
-                />
-              </label>
-              <label>
-                {copy.workspace.output}
-                <textarea
-                  className="sample-input taller"
-                  value={sampleOutputs[active.id] || ""}
-                  onChange={(event) => onOutputChange(active.id, event.target.value)}
-                  spellCheck={false}
-                />
-              </label>
+      <div className="tests-content">
+        {activePanel === "testcase" ? (
+          <>
+            <div className="case-tabs">
+              {tests.map((test, index) => (
+                <button className={test.id === active?.id ? "active" : ""} key={test.id} onClick={() => onActiveCase(test.id)}>
+                  {copy.workspace.case(index + 1)}
+                </button>
+              ))}
             </div>
-          ) : (
-            <p className="result-placeholder">{copy.workspace.noPublicTests}</p>
-          )}
-        </>
-      ) : (
-        <ResultBox result={result} problem={problem} copy={copy} />
-      )}
+
+            {active ? (
+              <div className="case-editor">
+                <label>
+                  {copy.workspace.inputArgs}
+                  <textarea
+                    className="sample-input taller"
+                    value={sampleInputs[active.id] || ""}
+                    onChange={(event) => onInputChange(active.id, event.target.value)}
+                    spellCheck={false}
+                  />
+                </label>
+                <label>
+                  {copy.workspace.output}
+                  <textarea
+                    className="sample-input taller"
+                    value={sampleOutputs[active.id] || ""}
+                    onChange={(event) => onOutputChange(active.id, event.target.value)}
+                    spellCheck={false}
+                  />
+                </label>
+              </div>
+            ) : (
+              <p className="result-placeholder">{copy.workspace.noPublicTests}</p>
+            )}
+          </>
+        ) : (
+          <ResultBox result={result} problem={problem} copy={copy} />
+        )}
+      </div>
     </section>
   );
 }

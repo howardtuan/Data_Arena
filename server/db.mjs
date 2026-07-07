@@ -100,6 +100,17 @@ function migrate(database) {
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
+    CREATE TABLE IF NOT EXISTS saved_codes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      problem_id INTEGER NOT NULL REFERENCES problems(id) ON DELETE CASCADE,
+      code TEXT NOT NULL,
+      last_action TEXT NOT NULL CHECK (last_action IN ('run', 'submit')),
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(user_id, problem_id)
+    );
+
     CREATE TABLE IF NOT EXISTS attempts (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -123,6 +134,7 @@ function migrate(database) {
     CREATE INDEX IF NOT EXISTS idx_problems_week ON problems(week);
     CREATE INDEX IF NOT EXISTS idx_submissions_user_problem ON submissions(user_id, problem_id);
     CREATE INDEX IF NOT EXISTS idx_submissions_problem_score ON submissions(problem_id, score DESC, runtime_ms ASC);
+    CREATE INDEX IF NOT EXISTS idx_saved_codes_user_problem ON saved_codes(user_id, problem_id);
     CREATE INDEX IF NOT EXISTS idx_attempts_user_problem_day ON attempts(user_id, problem_id, day_key);
     CREATE INDEX IF NOT EXISTS idx_attempts_status_expires ON attempts(status, expires_at);
   `);
