@@ -1407,7 +1407,7 @@ function ProblemWorkspace({
         <div
           ref={rightRef}
           className="workspace-right"
-          style={{ gridTemplateRows: `${testSplit}% 8px minmax(240px, 1fr)` }}
+          style={{ gridTemplateRows: `minmax(0, ${testSplit}fr) 8px minmax(0, ${100 - testSplit}fr)` }}
         >
           <CodePanel code={code} canEdit={canEdit} copy={copy} onCodeChange={onCodeChange} />
           <div
