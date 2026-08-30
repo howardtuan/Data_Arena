@@ -668,6 +668,10 @@ input:disabled {
   line-height: 1.85;
 }
 
+.problem-statement > p {
+  white-space: pre-wrap;
+}
+
 .problem-statement code,
 .upload-guide code {
   border: 1px solid #484848;

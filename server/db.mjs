@@ -6,7 +6,7 @@ import { config } from "./config.mjs";
 import { buildProblemBank } from "./problem-bank.mjs";
 
 let db;
-const PROBLEM_BANK_VERSION = "2026-06-data-mining-difficulty-v2";
+const PROBLEM_BANK_VERSION = "2026-08-pure-python-unit-bank-v3";
 
 export function getDb() {
   if (!db) {

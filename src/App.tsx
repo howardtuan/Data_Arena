@@ -207,7 +207,7 @@ const COPY = {
       tabsLabel: "登入或註冊"
     },
     common: {
-      week: "週次",
+      week: "單元",
       problem: "題目",
       submit: "Submit",
       run: "Run",
@@ -309,7 +309,7 @@ const COPY = {
       title: "進度",
       login: "請先登入。",
       intro: "查看每一題的 submit 次數、最佳分數與最後提交時間。",
-      headers: ["週次", "題目", "Submit", "最佳分數", "最後提交"]
+      headers: ["單元", "題目", "Submit", "最佳分數", "最後提交"]
     },
     teacher: {
       title: "教師後台",
@@ -336,7 +336,7 @@ const COPY = {
       title: "上傳題目",
       reset: "載入雙語範例題目",
       slug: "Slug",
-      week: "週次",
+      week: "單元",
       seriesTitle: "系列名稱（中文）",
       seriesTitleEn: "系列名稱（英文）",
       titleZh: "題目名稱（中文）",
@@ -398,7 +398,7 @@ const COPY = {
       tabsLabel: "Login or register"
     },
     common: {
-      week: "Week",
+      week: "Unit",
       problem: "Problem",
       submit: "Submit",
       run: "Run",
@@ -500,7 +500,7 @@ const COPY = {
       title: "Progress",
       login: "Please log in.",
       intro: "Review submit count, best score, and last submission time for each problem.",
-      headers: ["Week", "Problem", "Submit", "Best score", "Last submission"]
+      headers: ["Unit", "Problem", "Submit", "Best score", "Last submission"]
     },
     teacher: {
       title: "Teacher",
@@ -527,7 +527,7 @@ const COPY = {
       title: "Upload Problem",
       reset: "Load bilingual sample",
       slug: "Slug",
-      week: "Week",
+      week: "Unit",
       seriesTitle: "Series title (Chinese)",
       seriesTitleEn: "Series title (English)",
       titleZh: "Problem title (Chinese)",
@@ -2051,7 +2051,7 @@ function TeacherView({
           <div className="admin-problem-list">
             {problems.map((problem) => (
               <div className="admin-row" key={problem.id}>
-                <span>Week {problem.week}</span>
+                <span>{copy.common.week} {problem.week}</span>
                 <strong>{displayProblemTitle(problem, language)}</strong>
                 <em>{problem.isOpen ? copy.teacher.visible : copy.teacher.closed}</em>
                 <button className={problem.isOpen ? "ghost-button compact danger" : "primary-button compact"} onClick={() => onToggleProblem(problem)}>
@@ -2433,7 +2433,7 @@ function displayProblemTitle(problem: Problem, language: Language) {
 }
 
 function displaySeries(problem: Problem, language: Language) {
-  return localizedProblemText(problem, "seriesTitle", "seriesTitleEn", language, `Week ${problem.week}`);
+  return localizedProblemText(problem, "seriesTitle", "seriesTitleEn", language, `Unit ${problem.week}`);
 }
 
 function displayCategory(problem: Problem, language: Language) {
