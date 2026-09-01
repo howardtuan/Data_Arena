@@ -264,9 +264,9 @@ app.post("/api/problems/:slug/submit", requireAuth, async (req, res, next) => {
     const saved = db
       .prepare(
         `INSERT INTO submissions (
-          user_id, problem_id, code, score, passed, passed_tests, total_tests, runtime_ms, details_json
+          user_id, problem_id, code, score, passed, passed_tests, total_tests, runtime_ms, peak_memory, details_json
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         req.user.id,
@@ -277,6 +277,7 @@ app.post("/api/problems/:slug/submit", requireAuth, async (req, res, next) => {
         result.passedTests,
         result.totalTests,
         result.runtimeMs,
+        result.peakMemory ?? 0,
         JSON.stringify(result.details)
       );
 

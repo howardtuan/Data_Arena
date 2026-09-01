@@ -4,6 +4,7 @@ import io
 import json
 import math
 import statistics
+import tracemalloc
 import traceback
 import sys
 
@@ -96,24 +97,35 @@ def main():
     pending_setup_stdout = setup_stdout.getvalue()
     for test_case in test_cases:
         case_stdout = io.StringIO()
+        peak = 0
         try:
+            tracemalloc.start()
             with contextlib.redirect_stdout(case_stdout):
                 result = target(*test_case["args"])
+            peak = tracemalloc.get_traced_memory()[1]
+            tracemalloc.stop()
             results.append(
                 {
                     "id": test_case["id"],
                     "ok": True,
                     "result": to_jsonable(result),
                     "stdout": limit_stdout(pending_setup_stdout + case_stdout.getvalue()),
+                    "peak_memory": peak,
                 }
             )
         except Exception as exc:
+            try:
+                peak = tracemalloc.get_traced_memory()[1]
+                tracemalloc.stop()
+            except Exception:
+                pass
             results.append(
                 {
                     "id": test_case["id"],
                     "ok": False,
                     "error": f"{exc.__class__.__name__}: {exc}",
                     "stdout": limit_stdout(pending_setup_stdout + case_stdout.getvalue()),
+                    "peak_memory": peak,
                 }
             )
         pending_setup_stdout = ""
