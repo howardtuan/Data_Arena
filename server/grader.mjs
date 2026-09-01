@@ -29,6 +29,7 @@ export async function gradeSubmission({ functionName, code, testCases, publicOnl
       passedTests: 0,
       totalTests: selectedCases.length,
       runtimeMs,
+      peakMemory: 0,
       details: selectedCases.map((testCase) =>
         buildDetail(testCase, {
           passed: false,
@@ -70,12 +71,14 @@ export async function gradeSubmission({ functionName, code, testCases, publicOnl
 
   const passedTests = details.filter((detail) => detail.passed).length;
   const score = selectedCases.length === 0 ? 0 : Math.round((passedTests / selectedCases.length) * 100);
+  const peakMemory = runnerResult.results.reduce((max, item) => Math.max(max, item.peak_memory || 0), 0);
   return {
     score,
     passed: passedTests === selectedCases.length,
     passedTests,
     totalTests: selectedCases.length,
     runtimeMs,
+    peakMemory,
     details
   };
 }

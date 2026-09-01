@@ -146,6 +146,10 @@ function migrate(database) {
   ensureColumn(database, "problems", "output_format_en", "output_format_en TEXT NOT NULL DEFAULT ''");
   ensureColumn(database, "problems", "constraints_text_en", "constraints_text_en TEXT NOT NULL DEFAULT ''");
   ensureColumn(database, "attempts", "focus_violations", "focus_violations INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(database, "problems", "is_contest", "is_contest INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(database, "problems", "opens_at", "opens_at TEXT");
+  ensureColumn(database, "problems", "closes_at", "closes_at TEXT");
+  ensureColumn(database, "submissions", "peak_memory", "peak_memory INTEGER NOT NULL DEFAULT 0");
 }
 
 function ensureColumn(database, table, column, definition) {
