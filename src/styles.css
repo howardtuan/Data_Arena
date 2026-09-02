@@ -1760,3 +1760,62 @@ input:disabled {
     padding: 12px;
   }
 }
+
+/* 週賽 Phase 2：競賽題標籤與老師設定 */
+.contest-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  background: #e8f0ff;
+  color: #1f4fd8;
+  white-space: nowrap;
+}
+.contest-chip.live {
+  background: #e6f8ef;
+  color: #0f9d58;
+}
+.contest-deadline {
+  font-size: 12px;
+  color: #6b7280;
+  white-space: nowrap;
+}
+.contest-admin-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 0;
+  border-bottom: 1px solid #eef0f4;
+}
+.admin-row-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.admin-row-contest {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding-left: 4px;
+}
+.admin-row-contest label.contest-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+.admin-row-contest label.contest-time {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: #4b5563;
+}
+.admin-row-contest label.contest-time input {
+  font-size: 13px;
+  padding: 4px 6px;
+}

@@ -53,6 +53,10 @@ type Problem = {
   starterCode: string;
   savedCode?: string | null;
   isOpen: boolean;
+  isContest?: boolean;
+  opensAt?: string | null;
+  closesAt?: string | null;
+  contestStatus?: "upcoming" | "active" | "ended" | null;
   bestScore?: number | null;
   submissions?: number;
   publicTests?: PublicTest[];
@@ -215,7 +219,9 @@ const COPY = {
       solved: "已解出",
       loading: "載入中",
       noData: "目前沒有資料",
-      unknownError: "發生未知錯誤"
+      unknownError: "發生未知錯誤",
+      contestLive: "競賽進行中",
+      contestEndsAt: "截止"
     },
     difficulties: {
       1: "簡單",
@@ -330,7 +336,16 @@ const COPY = {
       visible: "學生可見",
       closed: "已關閉",
       close: "關閉題目",
-      open: "開放題目"
+      open: "開放題目",
+      contestToggle: "設為競賽題",
+      contestOpensAt: "開放時間（台北）",
+      contestClosesAt: "關閉時間（台北）",
+      contestSave: "儲存",
+      contestSaved: "已儲存競賽設定",
+      contestUpcoming: "即將開始",
+      contestActive: "進行中",
+      contestEnded: "已結束（練習）",
+      contestHint: "勾選後設定開放與關閉時間，系統會自動開放、自動關閉。"
     },
     upload: {
       title: "上傳題目",
@@ -406,7 +421,9 @@ const COPY = {
       solved: "Solved",
       loading: "Loading",
       noData: "No data yet",
-      unknownError: "Unknown error"
+      unknownError: "Unknown error",
+      contestLive: "Contest live",
+      contestEndsAt: "Ends"
     },
     difficulties: {
       1: "Easy",
@@ -521,7 +538,16 @@ const COPY = {
       visible: "Visible",
       closed: "Closed",
       close: "Close",
-      open: "Open"
+      open: "Open",
+      contestToggle: "Contest problem",
+      contestOpensAt: "Opens at (Taipei)",
+      contestClosesAt: "Closes at (Taipei)",
+      contestSave: "Save",
+      contestSaved: "Contest settings saved",
+      contestUpcoming: "Upcoming",
+      contestActive: "Live",
+      contestEnded: "Ended (practice)",
+      contestHint: "When checked, set open/close times; the system opens and closes automatically."
     },
     upload: {
       title: "Upload Problem",
@@ -930,6 +956,27 @@ function App() {
     }
   }
 
+  async function saveContestSettings(
+    problem: Problem,
+    patch: { isContest: boolean; opensAt: string | null; closesAt: string | null }
+  ) {
+    setLoading(true);
+    setStatus("");
+    try {
+      await api<{ problem: Problem }>(
+        `/api/admin/problems/${problem.id}`,
+        { method: "PATCH", body: JSON.stringify(patch) },
+        token
+      );
+      setStatus(copy.teacher.contestSaved);
+      await Promise.all([loadAdmin(), bootstrap()]);
+    } catch (error) {
+      setStatus(readError(error, copy.common.unknownError));
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function createProblem(event: FormEvent) {
     event.preventDefault();
     setLoading(true);
@@ -1040,6 +1087,7 @@ function App() {
             language={language}
             copy={copy}
             onToggleProblem={toggleProblemOpen}
+            onSaveContest={saveContestSettings}
             onFormChange={setUploadForm}
             onCreateProblem={createProblem}
             onResetTemplate={() => setUploadForm(DEFAULT_PROBLEM_FORM)}
@@ -1252,6 +1300,7 @@ function ProblemListView({
                 <strong>{index + 1}. {displayProblemTitle(problem, language)}</strong>
                 <span className="row-category">{displayCategory(problem, language)}</span>
                 <span className={`difficulty d${problem.difficulty}`}>{difficultyLabel(problem.difficulty, copy)}</span>
+                {problem.contestStatus === "active" && <span className="contest-chip live">{copy.common.contestLive}</span>}
                 <span className={problem.isOpen ? "lock-icon" : "lock-icon closed"}>{problem.isOpen ? "▮▮" : "🔒"}</span>
               </button>
             ))
@@ -1522,6 +1571,10 @@ function ProblemStatement({
             <span>{displayCategory(problem, language)}</span>
             <span>{displaySeries(problem, language)}</span>
             {!problem.isOpen && <span className="closed-chip">{copy.common.closed}</span>}
+            {problem.contestStatus === "active" && <span className="contest-chip live">{copy.common.contestLive}</span>}
+            {problem.contestStatus === "active" && problem.closesAt && (
+              <span className="contest-deadline">{copy.common.contestEndsAt} {formatTaipei(problem.closesAt)}</span>
+            )}
           </div>
 
           <p>{displayStatement(problem, language)}</p>
@@ -1995,6 +2048,101 @@ function ProgressView({
   );
 }
 
+function taipeiInputToIso(local: string): string | null {
+  if (!local) return null;
+  const ts = Date.parse(`${local}:00+08:00`);
+  if (Number.isNaN(ts)) return null;
+  return new Date(ts).toISOString();
+}
+
+function isoToTaipeiInput(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const ts = Date.parse(iso);
+  if (Number.isNaN(ts)) return "";
+  return new Date(ts + 8 * 3600 * 1000).toISOString().slice(0, 16);
+}
+
+function formatTaipei(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const ts = Date.parse(iso);
+  if (Number.isNaN(ts)) return "";
+  const d = new Date(ts + 8 * 3600 * 1000);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getUTCFullYear()}/${pad(d.getUTCMonth() + 1)}/${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
+}
+
+function AdminProblemRow({
+  problem,
+  language,
+  copy,
+  loading,
+  onToggleProblem,
+  onSaveContest
+}: {
+  problem: Problem;
+  language: Language;
+  copy: Copy;
+  loading: boolean;
+  onToggleProblem: (problem: Problem) => void;
+  onSaveContest: (problem: Problem, patch: { isContest: boolean; opensAt: string | null; closesAt: string | null }) => void;
+}) {
+  const [isContest, setIsContest] = useState<boolean>(Boolean(problem.isContest));
+  const [opensLocal, setOpensLocal] = useState<string>(isoToTaipeiInput(problem.opensAt));
+  const [closesLocal, setClosesLocal] = useState<string>(isoToTaipeiInput(problem.closesAt));
+
+  const statusLabel =
+    problem.contestStatus === "upcoming"
+      ? copy.teacher.contestUpcoming
+      : problem.contestStatus === "active"
+      ? copy.teacher.contestActive
+      : problem.contestStatus === "ended"
+      ? copy.teacher.contestEnded
+      : "";
+
+  return (
+    <div className="admin-row contest-admin-row">
+      <div className="admin-row-main">
+        <span>{copy.common.week} {problem.week}</span>
+        <strong>{displayProblemTitle(problem, language)}</strong>
+        <em>{problem.isOpen ? copy.teacher.visible : copy.teacher.closed}</em>
+        <button className={problem.isOpen ? "ghost-button compact danger" : "primary-button compact"} onClick={() => onToggleProblem(problem)}>
+          {problem.isOpen ? copy.teacher.close : copy.teacher.open}
+        </button>
+      </div>
+      <div className="admin-row-contest">
+        <label className="contest-check">
+          <input type="checkbox" checked={isContest} onChange={(event) => setIsContest(event.target.checked)} />
+          {copy.teacher.contestToggle}
+        </label>
+        {isContest && (
+          <>
+            <label className="contest-time">{copy.teacher.contestOpensAt}
+              <input type="datetime-local" value={opensLocal} onChange={(event) => setOpensLocal(event.target.value)} />
+            </label>
+            <label className="contest-time">{copy.teacher.contestClosesAt}
+              <input type="datetime-local" value={closesLocal} onChange={(event) => setClosesLocal(event.target.value)} />
+            </label>
+          </>
+        )}
+        {statusLabel && <span className="contest-chip">{statusLabel}</span>}
+        <button
+          className="primary-button compact"
+          disabled={loading}
+          onClick={() =>
+            onSaveContest(problem, {
+              isContest,
+              opensAt: isContest ? taipeiInputToIso(opensLocal) : null,
+              closesAt: isContest ? taipeiInputToIso(closesLocal) : null
+            })
+          }
+        >
+          {copy.teacher.contestSave}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function TeacherView({
   user,
   dashboard,
@@ -2004,6 +2152,7 @@ function TeacherView({
   language,
   copy,
   onToggleProblem,
+  onSaveContest,
   onFormChange,
   onCreateProblem,
   onResetTemplate
@@ -2016,6 +2165,7 @@ function TeacherView({
   language: Language;
   copy: Copy;
   onToggleProblem: (problem: Problem) => void;
+  onSaveContest: (problem: Problem, patch: { isContest: boolean; opensAt: string | null; closesAt: string | null }) => void;
   onFormChange: (form: ProblemForm) => void;
   onCreateProblem: (event: FormEvent) => void;
   onResetTemplate: () => void;
@@ -2046,18 +2196,19 @@ function TeacherView({
         <section className="panel">
           <div className="panel-title-row">
             <h2>{copy.teacher.manageTitle}</h2>
-            <span>{copy.teacher.manageHint}</span>
+            <span>{copy.teacher.manageHint}｜{copy.teacher.contestHint}</span>
           </div>
           <div className="admin-problem-list">
             {problems.map((problem) => (
-              <div className="admin-row" key={problem.id}>
-                <span>{copy.common.week} {problem.week}</span>
-                <strong>{displayProblemTitle(problem, language)}</strong>
-                <em>{problem.isOpen ? copy.teacher.visible : copy.teacher.closed}</em>
-                <button className={problem.isOpen ? "ghost-button compact danger" : "primary-button compact"} onClick={() => onToggleProblem(problem)}>
-                  {problem.isOpen ? copy.teacher.close : copy.teacher.open}
-                </button>
-              </div>
+              <AdminProblemRow
+                key={problem.id}
+                problem={problem}
+                language={language}
+                copy={copy}
+                loading={loading}
+                onToggleProblem={onToggleProblem}
+                onSaveContest={onSaveContest}
+              />
             ))}
           </div>
         </section>
