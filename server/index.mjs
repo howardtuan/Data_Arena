@@ -468,6 +468,77 @@ app.patch("/api/admin/problems/:id", requireAdmin, (req, res) => {
   res.json({ problem: publicProblem(db.prepare("SELECT * FROM problems WHERE id = ?").get(id)) });
 });
 
+app.get("/api/admin/problems/:id", requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  const problem = db.prepare("SELECT * FROM problems WHERE id = ?").get(id);
+  if (!problem) return res.status(404).json({ error: "找不到題目" });
+  const tests = getTestCases(problem.id).map((row) => ({
+    id: row.id,
+    name: row.name,
+    visibility: row.visibility,
+    args: JSON.parse(row.args_json),
+    expected: JSON.parse(row.expected_json),
+    comparator: row.comparator,
+    points: row.points
+  }));
+  res.json({ problem: { ...publicProblem(problem), tests } });
+});
+
+app.put("/api/admin/problems/:id", requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  const existing = db.prepare("SELECT * FROM problems WHERE id = ?").get(id);
+  if (!existing) return res.status(404).json({ error: "找不到題目" });
+  const parsed = normalizeProblemPayload(req.body || {}, { keepSlug: existing.slug });
+  if (parsed.errors.length) {
+    return res.status(400).json({ error: parsed.errors.join("；") });
+  }
+  const problem = parsed.problem;
+  const updateProblem = db.transaction(() => {
+    db.prepare(
+      `UPDATE problems SET
+         week = @week, series_title = @seriesTitle, series_title_en = @seriesTitleEn,
+         title = @title, title_en = @titleEn, difficulty = @difficulty,
+         category = @category, category_en = @categoryEn, time_limit_seconds = @timeLimitSeconds,
+         function_name = @functionName, signature_json = @signatureJson,
+         statement = @statement, statement_en = @statementEn,
+         input_format = @inputFormat, input_format_en = @inputFormatEn,
+         output_format = @outputFormat, output_format_en = @outputFormatEn,
+         constraints_text = @constraintsText, constraints_text_en = @constraintsTextEn,
+         starter_code = @starterCode, is_open = @isOpen
+       WHERE id = @id`
+    ).run({
+      ...problem,
+      signatureJson: JSON.stringify(problem.signature),
+      isOpen: problem.isOpen ? 1 : 0,
+      id
+    });
+    db.prepare("DELETE FROM test_cases WHERE problem_id = ?").run(id);
+    const insertCase = db.prepare(
+      `INSERT INTO test_cases (problem_id, name, visibility, args_json, expected_json, comparator, points)
+       VALUES (@problemId, @name, @visibility, @argsJson, @expectedJson, @comparator, @points)`
+    );
+    for (const testCase of problem.tests) {
+      insertCase.run({
+        problemId: id,
+        name: testCase.name,
+        visibility: testCase.visibility,
+        argsJson: JSON.stringify(testCase.args),
+        expectedJson: JSON.stringify(testCase.expected),
+        comparator: testCase.comparator,
+        points: testCase.points
+      });
+    }
+  });
+  updateProblem();
+  const updated = db.prepare("SELECT * FROM problems WHERE id = ?").get(id);
+  res.json({
+    problem: {
+      ...publicProblem(updated),
+      publicTests: getTestCases(id, "public").slice(0, 2).map(publicTestCase)
+    }
+  });
+});
+
 app.get("/api/admin/submissions", requireAdmin, (_req, res) => {
   const submissions = db
     .prepare(
@@ -661,7 +732,7 @@ function publicTestCase(row) {
   };
 }
 
-function normalizeProblemPayload(body) {
+function normalizeProblemPayload(body, options = {}) {
   const errors = [];
   const week = Number(body.week);
   const difficulty = Number(body.difficulty);
@@ -722,7 +793,7 @@ function normalizeProblemPayload(body) {
   }
 
   const slugBase = String(body.slug || "").trim() || `${week}-${title}`;
-  const slug = uniqueSlug(slugify(slugBase));
+  const slug = options.keepSlug || uniqueSlug(slugify(slugBase));
   const starterCode =
     String(body.starterCode || "").trim() ||
     `def ${functionName}(${signature.join(", ")}):\n    # TODO: implement your solution\n    pass\n`;
