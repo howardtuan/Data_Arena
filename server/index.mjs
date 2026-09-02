@@ -77,9 +77,11 @@ app.get("/api/problems", optionalAuth, (req, res) => {
     `SELECT * FROM problems${where.length ? ` WHERE ${where.join(" AND ")}` : ""} ORDER BY week, id`
   );
   const rows = week ? problemQuery.all({ week }) : problemQuery.all();
+  const isAdmin = req.user?.role === "admin";
+  const visibleRows = rows.filter((row) => isAdmin || contestStatusOf(row) !== "upcoming");
   const progress = req.user ? getProgressMap(req.user.id) : new Map();
   res.json({
-    problems: rows.map((row) => ({
+    problems: visibleRows.map((row) => ({
       ...publicProblem(row),
       bestScore: progress.get(row.id)?.score ?? null,
       submissions: progress.get(row.id)?.submissions ?? 0
@@ -427,9 +429,42 @@ app.post("/api/admin/problems", requireAdmin, (req, res) => {
 
 app.patch("/api/admin/problems/:id", requireAdmin, (req, res) => {
   const id = Number(req.params.id);
-  const isOpen = req.body?.isOpen ? 1 : 0;
-  const result = db.prepare("UPDATE problems SET is_open = ? WHERE id = ?").run(isOpen, id);
-  if (!result.changes) return res.status(404).json({ error: "找不到題目" });
+  const existing = db.prepare("SELECT * FROM problems WHERE id = ?").get(id);
+  if (!existing) return res.status(404).json({ error: "找不到題目" });
+  const body = req.body || {};
+  const updates = [];
+  const values = [];
+  if ("isOpen" in body) {
+    updates.push("is_open = ?");
+    values.push(body.isOpen ? 1 : 0);
+  }
+  if ("isContest" in body) {
+    updates.push("is_contest = ?");
+    values.push(body.isContest ? 1 : 0);
+  }
+  if ("opensAt" in body) {
+    if (body.opensAt && normalizeIsoOrNull(body.opensAt) === null) {
+      return res.status(400).json({ error: "開放時間格式不正確" });
+    }
+    updates.push("opens_at = ?");
+    values.push(normalizeIsoOrNull(body.opensAt));
+  }
+  if ("closesAt" in body) {
+    if (body.closesAt && normalizeIsoOrNull(body.closesAt) === null) {
+      return res.status(400).json({ error: "關閉時間格式不正確" });
+    }
+    updates.push("closes_at = ?");
+    values.push(normalizeIsoOrNull(body.closesAt));
+  }
+  const finalOpens = "opensAt" in body ? normalizeIsoOrNull(body.opensAt) : existing.opens_at;
+  const finalCloses = "closesAt" in body ? normalizeIsoOrNull(body.closesAt) : existing.closes_at;
+  if (finalOpens && finalCloses && Date.parse(finalOpens) >= Date.parse(finalCloses)) {
+    return res.status(400).json({ error: "開放時間必須早於關閉時間" });
+  }
+  if (updates.length) {
+    values.push(id);
+    db.prepare(`UPDATE problems SET ${updates.join(", ")} WHERE id = ?`).run(...values);
+  }
   res.json({ problem: publicProblem(db.prepare("SELECT * FROM problems WHERE id = ?").get(id)) });
 });
 
@@ -553,7 +588,26 @@ function getProblemBySlug(slug) {
 }
 
 function canSeeProblem(user, problem) {
-  return Boolean(problem?.is_open || user?.role === "admin");
+  if (user?.role === "admin") return true;
+  if (!problem?.is_open) return false;
+  if (contestStatusOf(problem) === "upcoming") return false;
+  return true;
+}
+
+function contestStatusOf(problem, now = Date.now()) {
+  if (!problem || !problem.is_contest) return null;
+  const opens = problem.opens_at ? Date.parse(problem.opens_at) : null;
+  const closes = problem.closes_at ? Date.parse(problem.closes_at) : null;
+  if (opens !== null && !Number.isNaN(opens) && now < opens) return "upcoming";
+  if (closes !== null && !Number.isNaN(closes) && now > closes) return "ended";
+  return "active";
+}
+
+function normalizeIsoOrNull(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const ts = Date.parse(value);
+  if (Number.isNaN(ts)) return null;
+  return new Date(ts).toISOString();
 }
 
 function getTestCases(problemId, visibility) {
@@ -589,7 +643,11 @@ function publicProblem(row) {
     constraintsText: row.constraints_text,
     constraintsTextEn: row.constraints_text_en || "",
     starterCode: row.starter_code,
-    isOpen: Boolean(row.is_open)
+    isOpen: Boolean(row.is_open),
+    isContest: Boolean(row.is_contest),
+    opensAt: row.opens_at || null,
+    closesAt: row.closes_at || null,
+    contestStatus: contestStatusOf(row)
   };
 }
 
