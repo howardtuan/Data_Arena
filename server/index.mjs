@@ -245,6 +245,25 @@ app.post("/api/problems/:slug/run", requireAuth, async (req, res, next) => {
   }
 });
 
+const SUBMIT_WINDOW_MS = 60 * 1000;
+const SUBMIT_MAX_PER_WINDOW = Number(process.env.SUBMIT_MAX_PER_MIN || 12);
+const SUBMIT_MIN_GAP_MS = Number(process.env.SUBMIT_MIN_GAP_MS || 3000);
+const submitHistory = new Map();
+
+function checkSubmitRate(userId) {
+  const now = Date.now();
+  const history = (submitHistory.get(userId) || []).filter((ts) => now - ts < SUBMIT_WINDOW_MS);
+  if (history.length > 0 && now - history[history.length - 1] < SUBMIT_MIN_GAP_MS) {
+    return { ok: false, retryAfter: Math.ceil((SUBMIT_MIN_GAP_MS - (now - history[history.length - 1])) / 1000) };
+  }
+  if (history.length >= SUBMIT_MAX_PER_WINDOW) {
+    return { ok: false, retryAfter: Math.ceil((SUBMIT_WINDOW_MS - (now - history[0])) / 1000) };
+  }
+  history.push(now);
+  submitHistory.set(userId, history);
+  return { ok: true };
+}
+
 app.post("/api/problems/:slug/submit", requireAuth, async (req, res, next) => {
   try {
     const problem = getProblemBySlug(req.params.slug);
@@ -255,6 +274,12 @@ app.post("/api/problems/:slug/submit", requireAuth, async (req, res, next) => {
     if (!canSeeProblem(req.user, problem)) return res.status(404).json({ error: "找不到題目" });
     const code = String(req.body?.code || "");
     if (!code.trim()) return res.status(400).json({ error: "請提交程式碼" });
+    if (req.user.role !== "admin") {
+      const rate = checkSubmitRate(req.user.id);
+      if (!rate.ok) {
+        return res.status(429).json({ error: `提交太頻繁，請 ${rate.retryAfter} 秒後再試。` });
+      }
+    }
     saveProblemCode(req.user.id, problem.id, code, "submit");
     const testCases = getTestCases(problem.id);
     const result = await gradeSubmission({

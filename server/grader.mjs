@@ -5,6 +5,44 @@ import { config } from "./config.mjs";
 
 const runnerPath = path.join(path.dirname(fileURLToPath(import.meta.url)), "grader", "run_submission.py");
 
+// 併發佇列：同時最多 N 個 Python 評分程序，其餘排隊，避免大量提交壓垮主機
+class Semaphore {
+  constructor(max) {
+    this.max = Math.max(1, max);
+    this.active = 0;
+    this.waiters = [];
+  }
+  acquire() {
+    return new Promise((resolve) => {
+      if (this.active < this.max) {
+        this.active += 1;
+        resolve();
+      } else {
+        this.waiters.push(resolve);
+      }
+    });
+  }
+  release() {
+    const next = this.waiters.shift();
+    if (next) {
+      next();
+    } else {
+      this.active -= 1;
+    }
+  }
+}
+
+const graderQueue = new Semaphore(config.graderConcurrency);
+
+async function runPython(payload) {
+  await graderQueue.acquire();
+  try {
+    return await spawnPython(payload);
+  } finally {
+    graderQueue.release();
+  }
+}
+
 export async function gradeSubmission({ functionName, code, testCases, publicOnly = false }) {
   const selectedCases = publicOnly
     ? testCases.filter((testCase) => testCase.visibility === "public")
@@ -104,7 +142,7 @@ function buildDetail(testCase, { passed, expected, actual, error, stdout, messag
   };
 }
 
-function runPython(payload) {
+function spawnPython(payload) {
   return new Promise((resolve) => {
     const child = spawn(config.pythonBin, [runnerPath], {
       env: { ...process.env, PYTHONIOENCODING: "utf-8" },
