@@ -143,6 +143,16 @@ type SampleCasePayload = {
   comparator?: string;
 };
 
+type FullTestCase = {
+  id?: number;
+  name: string;
+  visibility: TestVisibility;
+  args: unknown[];
+  expected: unknown;
+  comparator?: string;
+  points?: number;
+};
+
 type ProblemForm = {
   slug: string;
   week: string;
@@ -242,7 +252,8 @@ const COPY = {
       submitFailed: "Submit 已送出，但尚未通過全部測資。",
       openedProblem: "題目已開放給學生。",
       closedProblem: "題目已關閉，學生列表不會再看到。",
-      createdProblem: (title: string) => `已建立題目：${title}`
+      createdProblem: (title: string) => `已建立題目：${title}`,
+      updatedProblem: (title: string) => `已更新題目：${title}`
     },
     problems: {
       title: "題庫",
@@ -334,6 +345,7 @@ const COPY = {
       manageTitle: "題目開放 / 關閉",
       manageHint: "預設所有題目開放；關閉後學生列表會隱藏。",
       visible: "學生可見",
+      edit: "編輯",
       closed: "已關閉",
       close: "關閉題目",
       open: "開放題目",
@@ -374,6 +386,9 @@ const COPY = {
       hiddenTests: "隱藏測資 JSON",
       openNow: "建立後立即開放給學生",
       submit: "建立題目",
+      editTitle: "編輯題目",
+      updateSubmit: "更新題目",
+      cancelEdit: "取消編輯",
       guideTitle: "老師上傳題目教學",
       guideItems: [
         ["Function name：", "填學生必須實作的函式名稱，例如 normalize_scores。"],
@@ -444,7 +459,8 @@ const COPY = {
       submitFailed: "Submitted, but not all tests passed.",
       openedProblem: "The problem is now visible to students.",
       closedProblem: "The problem is closed and hidden from student lists.",
-      createdProblem: (title: string) => `Problem created: ${title}`
+      createdProblem: (title: string) => `Problem created: ${title}`,
+      updatedProblem: (title: string) => `Problem updated: ${title}`
     },
     problems: {
       title: "Problem List",
@@ -536,6 +552,7 @@ const COPY = {
       manageTitle: "Open / Close Problems",
       manageHint: "Problems are open by default. Closed problems are hidden from students.",
       visible: "Visible",
+      edit: "Edit",
       closed: "Closed",
       close: "Close",
       open: "Open",
@@ -576,6 +593,9 @@ const COPY = {
       hiddenTests: "Hidden test cases JSON",
       openNow: "Open to students immediately",
       submit: "Create problem",
+      editTitle: "Edit problem",
+      updateSubmit: "Update problem",
+      cancelEdit: "Cancel edit",
       guideTitle: "Teacher Upload Guide",
       guideItems: [
         ["Function name: ", "Use the Python function students must implement, such as normalize_scores."],
@@ -687,6 +707,7 @@ function App() {
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
   const [adminProblems, setAdminProblems] = useState<Problem[]>([]);
   const [uploadForm, setUploadForm] = useState<ProblemForm>(DEFAULT_PROBLEM_FORM);
+  const [editingProblemId, setEditingProblemId] = useState<number | null>(null);
   const [authForm, setAuthForm] = useState({ name: "", studentId: "", email: "", password: "" });
   const [status, setStatus] = useState("");
   const [loading, setLoading] = useState(false);
@@ -983,19 +1004,55 @@ function App() {
     setStatus("");
     try {
       const payload = problemFormToPayload(uploadForm);
-      const response = await api<{ problem: Problem }>(
-        "/api/admin/problems",
-        { method: "POST", body: JSON.stringify(payload) },
-        token
-      );
-      setStatus(copy.status.createdProblem(displayProblemTitle(response.problem, language)));
-      setSelectedSlug(response.problem.slug);
-      await Promise.all([loadAdmin(), bootstrap()]);
+      if (editingProblemId != null) {
+        const response = await api<{ problem: Problem }>(
+          `/api/admin/problems/${editingProblemId}`,
+          { method: "PUT", body: JSON.stringify(payload) },
+          token
+        );
+        setStatus(copy.status.updatedProblem(displayProblemTitle(response.problem, language)));
+        setEditingProblemId(null);
+        setUploadForm(DEFAULT_PROBLEM_FORM);
+        await Promise.all([loadAdmin(), bootstrap()]);
+      } else {
+        const response = await api<{ problem: Problem }>(
+          "/api/admin/problems",
+          { method: "POST", body: JSON.stringify(payload) },
+          token
+        );
+        setStatus(copy.status.createdProblem(displayProblemTitle(response.problem, language)));
+        setSelectedSlug(response.problem.slug);
+        await Promise.all([loadAdmin(), bootstrap()]);
+      }
     } catch (error) {
       setStatus(readError(error, copy.common.unknownError));
     } finally {
       setLoading(false);
     }
+  }
+
+  async function startEditProblem(problem: Problem) {
+    setLoading(true);
+    setStatus("");
+    try {
+      const response = await api<{ problem: Problem & { tests: FullTestCase[] } }>(
+        `/api/admin/problems/${problem.id}`,
+        {},
+        token
+      );
+      setUploadForm(problemToForm(response.problem, response.problem.tests || []));
+      setEditingProblemId(problem.id);
+    } catch (error) {
+      setStatus(readError(error, copy.common.unknownError));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function cancelEditProblem() {
+    setEditingProblemId(null);
+    setUploadForm(DEFAULT_PROBLEM_FORM);
+    setStatus("");
   }
 
   return (
@@ -1088,6 +1145,9 @@ function App() {
             copy={copy}
             onToggleProblem={toggleProblemOpen}
             onSaveContest={saveContestSettings}
+            onEditProblem={startEditProblem}
+            editing={editingProblemId != null}
+            onCancelEdit={cancelEditProblem}
             onFormChange={setUploadForm}
             onCreateProblem={createProblem}
             onResetTemplate={() => setUploadForm(DEFAULT_PROBLEM_FORM)}
@@ -2077,7 +2137,8 @@ function AdminProblemRow({
   copy,
   loading,
   onToggleProblem,
-  onSaveContest
+  onSaveContest,
+  onEditProblem
 }: {
   problem: Problem;
   language: Language;
@@ -2085,6 +2146,7 @@ function AdminProblemRow({
   loading: boolean;
   onToggleProblem: (problem: Problem) => void;
   onSaveContest: (problem: Problem, patch: { isContest: boolean; opensAt: string | null; closesAt: string | null }) => void;
+  onEditProblem: (problem: Problem) => void;
 }) {
   const [isContest, setIsContest] = useState<boolean>(Boolean(problem.isContest));
   const [opensLocal, setOpensLocal] = useState<string>(isoToTaipeiInput(problem.opensAt));
@@ -2108,6 +2170,7 @@ function AdminProblemRow({
         <button className={problem.isOpen ? "ghost-button compact danger" : "primary-button compact"} onClick={() => onToggleProblem(problem)}>
           {problem.isOpen ? copy.teacher.close : copy.teacher.open}
         </button>
+        <button className="ghost-button compact" onClick={() => onEditProblem(problem)}>{copy.teacher.edit}</button>
       </div>
       <div className="admin-row-contest">
         <label className="contest-check">
@@ -2153,6 +2216,9 @@ function TeacherView({
   copy,
   onToggleProblem,
   onSaveContest,
+  onEditProblem,
+  editing,
+  onCancelEdit,
   onFormChange,
   onCreateProblem,
   onResetTemplate
@@ -2166,11 +2232,18 @@ function TeacherView({
   copy: Copy;
   onToggleProblem: (problem: Problem) => void;
   onSaveContest: (problem: Problem, patch: { isContest: boolean; opensAt: string | null; closesAt: string | null }) => void;
+  onEditProblem: (problem: Problem) => void;
+  editing: boolean;
+  onCancelEdit: () => void;
   onFormChange: (form: ProblemForm) => void;
   onCreateProblem: (event: FormEvent) => void;
   onResetTemplate: () => void;
 }) {
   const [tab, setTab] = useState<"manage" | "upload">("manage");
+  const startEdit = (problem: Problem) => {
+    onEditProblem(problem);
+    setTab("upload");
+  };
   if (user?.role !== "admin") return <section className="panel">{copy.teacher.denied}</section>;
 
   return (
@@ -2208,13 +2281,14 @@ function TeacherView({
                 loading={loading}
                 onToggleProblem={onToggleProblem}
                 onSaveContest={onSaveContest}
+                onEditProblem={startEdit}
               />
             ))}
           </div>
         </section>
       ) : (
         <section className="teacher-upload-grid">
-          <ProblemUploadForm form={form} loading={loading} copy={copy} onFormChange={onFormChange} onSubmit={onCreateProblem} onResetTemplate={onResetTemplate} />
+          <ProblemUploadForm form={form} loading={loading} copy={copy} editing={editing} onFormChange={onFormChange} onSubmit={onCreateProblem} onResetTemplate={onResetTemplate} onCancelEdit={onCancelEdit} />
           <UploadGuide copy={copy} />
         </section>
       )}
@@ -2226,23 +2300,27 @@ function ProblemUploadForm({
   form,
   loading,
   copy,
+  editing,
   onFormChange,
   onSubmit,
-  onResetTemplate
+  onResetTemplate,
+  onCancelEdit
 }: {
   form: ProblemForm;
   loading: boolean;
   copy: Copy;
+  editing: boolean;
   onFormChange: (form: ProblemForm) => void;
   onSubmit: (event: FormEvent) => void;
   onResetTemplate: () => void;
+  onCancelEdit: () => void;
 }) {
   const update = (patch: Partial<ProblemForm>) => onFormChange({ ...form, ...patch });
 
   return (
     <form className="panel upload-form" onSubmit={onSubmit}>
       <div className="panel-title-row">
-        <h2>{copy.upload.title}</h2>
+        <h2>{editing ? copy.upload.editTitle : copy.upload.title}</h2>
         <button className="ghost-button compact" type="button" onClick={onResetTemplate}>{copy.upload.reset}</button>
       </div>
       <div className="form-grid">
@@ -2282,7 +2360,8 @@ function ProblemUploadForm({
         </label>
       </div>
       <div className="form-actions">
-        <button className="primary-button" disabled={loading}>{copy.upload.submit}</button>
+        <button className="primary-button" disabled={loading}>{editing ? copy.upload.updateSubmit : copy.upload.submit}</button>
+        {editing && <button type="button" className="ghost-button" onClick={onCancelEdit}>{copy.upload.cancelEdit}</button>}
       </div>
     </form>
   );
@@ -2329,6 +2408,44 @@ async function api<T>(path: string, options: RequestInit = {}, token = ""): Prom
     throw new Error(data.error || `HTTP ${response.status}`);
   }
   return data as T;
+}
+
+function problemToForm(problem: Problem, tests: FullTestCase[]): ProblemForm {
+  const strip = (t: FullTestCase) => ({
+    name: t.name,
+    args: t.args,
+    expected: t.expected,
+    comparator: t.comparator || "exact",
+    ...(t.points && t.points !== 1 ? { points: t.points } : {})
+  });
+  const publicTests = tests.filter((t) => t.visibility === "public").map(strip);
+  const hiddenTests = tests.filter((t) => t.visibility === "hidden").map(strip);
+  return {
+    slug: problem.slug,
+    week: String(problem.week),
+    seriesTitle: problem.seriesTitle,
+    seriesTitleEn: problem.seriesTitleEn || "",
+    title: problem.title,
+    titleEn: problem.titleEn || "",
+    difficulty: String(problem.difficulty),
+    category: problem.category,
+    categoryEn: problem.categoryEn || "",
+    timeLimitSeconds: String(problem.timeLimitSeconds),
+    functionName: problem.functionName,
+    signature: (problem.signature || []).join(", "),
+    statement: problem.statement,
+    statementEn: problem.statementEn || "",
+    inputFormat: problem.inputFormat,
+    inputFormatEn: problem.inputFormatEn || "",
+    outputFormat: problem.outputFormat,
+    outputFormatEn: problem.outputFormatEn || "",
+    constraintsText: problem.constraintsText,
+    constraintsTextEn: problem.constraintsTextEn || "",
+    starterCode: problem.starterCode,
+    publicTestsText: JSON.stringify(publicTests, null, 2),
+    hiddenTestsText: JSON.stringify(hiddenTests, null, 2),
+    isOpen: problem.isOpen
+  };
 }
 
 function problemFormToPayload(form: ProblemForm) {
