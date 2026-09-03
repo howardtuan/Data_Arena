@@ -11,5 +11,6 @@ export const config = {
   adminEmail: process.env.ADMIN_EMAIL || "admin@dataarena.local",
   adminPassword: process.env.ADMIN_PASSWORD || "DataArena@2026!",
   pythonBin: process.env.PYTHON_BIN || "python",
-  graderTimeoutMs: Number(process.env.GRADER_TIMEOUT_MS || 5000)
+  graderTimeoutMs: Number(process.env.GRADER_TIMEOUT_MS || 5000),
+  graderConcurrency: Number(process.env.GRADER_CONCURRENCY || 3)
 };
