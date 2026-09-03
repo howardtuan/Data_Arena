@@ -101,11 +101,14 @@ type LeaderboardEntry = {
   rank: number;
   name: string;
   studentId: string;
-  semesterScore: number;
-  settledSolved: number;
-  settledProblemCount: number;
-  weeksCounted: number;
+  averageRank: number;
+  averageProblemScore: number;
+  solvedProblems: number;
+  attemptedProblems: number;
   totalSubmissions: number;
+  totalFailures: number;
+  totalRuntimeMs: number;
+  problemCount: number;
 };
 
 type LeaderboardExplanation = {
@@ -309,15 +312,15 @@ const COPY = {
     },
     leaderboard: {
       title: "排行榜",
-      intro: "只計算競賽題：每週 2 題，關閉結算後列入計分。",
+      intro: "依每題得分、submit 次數與失敗次數計算排名。",
       rules: "排名規則",
-      empty: "目前還沒有已結算的競賽成績。",
+      empty: "目前還沒有排行榜資料。",
       fallbackTitle: "排名規則",
-      fallbackSummary: "排行榜只計算競賽題（每週 2 題），關閉結算後才列入。",
-      fallbackScore: "每題 0～100：未全對 = 60 ×通過比例；全對 = 60 + 40 效率（時間 0.6、記憶體 0.4，全對者相對比較）。",
-      fallbackRanking: "每週 = 2 題平均；學期總分 = 各已結算週平均（缺席週以 0 計）。",
-      fallbackTie: "同分時依已解競賽題數、總提交次數排序。",
-      headers: ["排名", "學生", "學期總分", "已結算競賽題", "Submit"]
+      fallbackSummary: "每題都會計算題目分，再取所有開放題目的平均排名。",
+      fallbackScore: "題目分包含最佳分數、submit 次數效率與失敗次數效率。",
+      fallbackRanking: "平均排名越低，總排名越前面。",
+      fallbackTie: "同分時依解題數、平均題目分、總 submit 次數與總失敗次數排序。",
+      headers: ["排名", "學生", "平均排名", "解題", "平均分", "Submit", "失敗"]
     },
     progress: {
       title: "進度",
@@ -516,15 +519,15 @@ const COPY = {
     },
     leaderboard: {
       title: "Leaderboard",
-      intro: "Contest problems only: two per week, scored after the window closes.",
+      intro: "Ranks are calculated from per-problem score, submit count, and failure count.",
       rules: "Ranking rules",
-      empty: "No settled contest results yet.",
+      empty: "No leaderboard data yet.",
       fallbackTitle: "Ranking Rules",
-      fallbackSummary: "The leaderboard counts contest problems only (two per week), scored after each window closes.",
-      fallbackScore: "Each problem is 0-100: not fully correct = 60 × pass ratio; fully correct = 60 + 40 efficiency (time 0.6, memory 0.4, relative among solvers).",
-      fallbackRanking: "Weekly = average of two problems; semester = average of settled weeks (missed weeks = 0).",
-      fallbackTie: "Ties compare solved contest problems, then total submissions.",
-      headers: ["Rank", "Student", "Semester", "Solved", "Submit"]
+      fallbackSummary: "Each open problem gets a problem score, then average rank is calculated across all open problems.",
+      fallbackScore: "Problem score includes best score, submit efficiency, and failure efficiency.",
+      fallbackRanking: "Lower average rank means a higher global rank.",
+      fallbackTie: "Ties compare solved count, average problem score, total submissions, and total failures.",
+      headers: ["Rank", "Student", "Avg. rank", "Solved", "Avg. score", "Submit", "Failures"]
     },
     progress: {
       title: "Progress",
@@ -2050,9 +2053,11 @@ function LeaderboardView({
                 <tr key={entry.studentId}>
                   <td>{entry.rank}</td>
                   <td>{entry.name}<span>{entry.studentId}</span></td>
-                  <td>{entry.semesterScore}</td>
-                  <td>{entry.settledSolved}/{entry.settledProblemCount}</td>
+                  <td>{entry.averageRank}</td>
+                  <td>{entry.solvedProblems}/{entry.problemCount}</td>
+                  <td>{entry.averageProblemScore}</td>
                   <td>{entry.totalSubmissions}</td>
+                  <td>{entry.totalFailures}</td>
                 </tr>
               ))}
             </tbody>

@@ -1009,184 +1009,163 @@ function throwHttp(status, message, attemptState) {
 }
 
 function buildGlobalLeaderboard() {
-  const now = Date.now();
   const students = db
     .prepare("SELECT id, name, student_id FROM users WHERE role = 'student' ORDER BY name, id")
     .all();
-
-  const explanation = {
-    title: "週賽排行榜計算方式",
-    titleEn: "How the Weekly Contest Leaderboard Is Calculated",
-    summary:
-      "排行榜只計算「競賽題」。每週開放 2 題，關閉結算後才列入計分；非競賽練習題不影響排名。",
-    summaryEn:
-      "The leaderboard counts contest problems only. Two problems open each week and are scored after the window closes; practice problems do not affect ranking.",
-    perProblemScore:
-      "每題 0～100 分：未全部通過 = 60 ×（通過測資比例）；全部通過 = 60 底分 + 40 效率分。效率分 = 40 ×（0.6 × 時間百分位 + 0.4 × 記憶體百分位），在「當題全部通過的同學」中相對比較，最快、最省記憶體者得滿分。",
-    perProblemScoreEn:
-      "Each problem is 0-100: not fully correct = 60 × (passed-test ratio); fully correct = 60 base + 40 efficiency. Efficiency = 40 × (0.6 × time percentile + 0.4 × memory percentile), compared among students who fully solved that problem.",
-    ranking:
-      "每週成績 = 該週 2 題分數的平均（沒作答的題以 0 分計）。學期總分 = 各已結算週成績的平均（沒參加的週以 0 分計）。總分越高，排名越前面。",
-    rankingEn:
-      "Weekly score = average of that week's two problem scores (unattempted = 0). Semester score = average of settled weekly scores (missed weeks = 0). A higher score ranks higher.",
-    tieBreakers:
-      "總分相同時，依序比較已解出的競賽題數（多者優先）、總提交次數（少者優先）、姓名。",
-    tieBreakersEn:
-      "On ties, compare solved contest problems (more first), total submissions (fewer first), then name."
-  };
-
-  const contestProblems = db
-    .prepare(
-      "SELECT id, opens_at, closes_at FROM problems WHERE is_contest = 1 AND closes_at IS NOT NULL ORDER BY opens_at, id"
-    )
-    .all()
-    .filter((problem) => {
-      const closes = Date.parse(problem.closes_at);
-      return !Number.isNaN(closes) && closes < now;
-    });
-
-  if (students.length === 0 || contestProblems.length === 0) {
-    return { leaderboard: [], explanation, weekCount: 0, contestProblemCount: contestProblems.length };
-  }
-
-  const problemIds = contestProblems.map((problem) => problem.id);
-  const placeholders = problemIds.map(() => "?").join(", ");
+  const problems = db.prepare("SELECT id FROM problems WHERE is_open = 1 ORDER BY week, id").all();
   const submissions = db
     .prepare(
-      `SELECT user_id, problem_id, passed, passed_tests, total_tests, runtime_ms, peak_memory, created_at
+      `SELECT user_id, problem_id, score, passed, runtime_ms, created_at
        FROM submissions
-       WHERE problem_id IN (${placeholders})
        ORDER BY created_at ASC`
     )
-    .all(...problemIds);
+    .all();
 
-  const problemById = new Map(contestProblems.map((problem) => [problem.id, problem]));
-  const bestByKey = new Map();
-  const submissionCount = new Map();
+  const explanation = {
+    title: "全站排行榜計算方式",
+    titleEn: "How the Global Leaderboard Is Calculated",
+    summary: "排行榜不是單題排名，而是把全部題目的題目排名取平均，形成全站平均題目排名。平均題目排名越小，總榜越前面。",
+    summaryEn:
+      "The leaderboard is not based on one problem. It averages each student's per-problem rank across all open problems. A lower average rank means a higher global rank.",
+    perProblemScore:
+      "每題先計算題目分：最佳通過率 70% + 時間效率 15% + submit 次數效率 10% + 失敗次數效率 5%。",
+    perProblemScoreEn:
+      "Each problem first receives a problem score: best score 70% + time efficiency 15% + submit efficiency 10% + failure efficiency 5%.",
+    ranking:
+      "每題依題目分排序得到該題排名；未提交該題會排在該題最後。總榜依所有開放題目的平均題目排名排序。",
+    rankingEn:
+      "Each problem is ranked by problem score. Students who did not submit a problem rank last for that problem. The global board sorts by average rank across all open problems.",
+    tieBreakers:
+      "平均題目排名相同時，依序比較解題數、平均題目分、總執行時間、總 submit 次數、總失敗次數。",
+    tieBreakersEn:
+      "If average rank ties, compare solved problems, average problem score, total runtime, total submissions, and total failures in order."
+  };
+
+  Object.assign(explanation, {
+    title: "排行榜計算方式",
+    titleEn: "How the Global Leaderboard Is Calculated",
+    summary:
+      "排行榜會先計算每位學生在每題的題目分，再取所有開放題目的平均排名。平均排名越低，總排名越前面。",
+    summaryEn:
+      "The leaderboard first computes each student's per-problem score, then averages ranks across all open problems. A lower average rank means a higher global rank.",
+    perProblemScore:
+      "每題題目分 = 最佳通過率 80% + submit 次數效率 15% + 失敗次數效率 5%。作答時間不納入計分。",
+    perProblemScoreEn:
+      "Each problem score = best score 80% + submit efficiency 15% + failure efficiency 5%. Solving time is not part of scoring.",
+    ranking:
+      "每題依題目分排名；未提交該題的學生排在該題最後。總榜依所有開放題目的平均排名排序。",
+    rankingEn:
+      "Each problem is ranked by problem score. Students who did not submit a problem rank last for that problem. The global board sorts by average rank across all open problems.",
+    tieBreakers:
+      "平均題目排名相同時，依序比較解題數、平均題目分、總 submit 次數與總失敗次數。",
+    tieBreakersEn:
+      "If average rank ties, compare solved problems, average problem score, total submissions, and total failures in order."
+  });
+
+  if (students.length === 0 || problems.length === 0) {
+    return { leaderboard: [], explanation, problemCount: problems.length };
+  }
+
+  const submissionsByKey = new Map();
   for (const submission of submissions) {
-    const problem = problemById.get(submission.problem_id);
-    if (!problem) continue;
-    const opensMs = problem.opens_at ? Date.parse(problem.opens_at) : Number.NEGATIVE_INFINITY;
-    const closesMs = problem.closes_at ? Date.parse(problem.closes_at) : Number.POSITIVE_INFINITY;
-    const createdMs = parseSqliteUtc(submission.created_at);
-    if (Number.isNaN(createdMs)) continue;
-    if (createdMs < opensMs || createdMs > closesMs) continue;
-    submissionCount.set(submission.user_id, (submissionCount.get(submission.user_id) || 0) + 1);
     const key = `${submission.user_id}:${submission.problem_id}`;
-    const ratio = submission.total_tests > 0 ? submission.passed_tests / submission.total_tests : 0;
-    const candidate = {
-      solved: Boolean(submission.passed),
-      ratio,
-      runtime: submission.runtime_ms || 0,
-      memory: submission.peak_memory || 0
-    };
-    const current = bestByKey.get(key);
-    bestByKey.set(key, current ? pickBetterBest(current, candidate) : candidate);
+    submissionsByKey.set(key, [...(submissionsByKey.get(key) || []), submission]);
   }
 
-  const problemScore = new Map();
-  for (const problem of contestProblems) {
-    const runtimes = [];
-    const memories = [];
-    for (const student of students) {
-      const best = bestByKey.get(`${student.id}:${problem.id}`);
-      if (best && best.solved) {
-        runtimes.push(best.runtime);
-        memories.push(best.memory);
-      }
-    }
-    for (const student of students) {
-      const key = `${student.id}:${problem.id}`;
-      const best = bestByKey.get(key);
-      if (!best) {
-        problemScore.set(key, 0);
-      } else if (best.solved) {
-        const efficiency =
-          0.6 * percentileLowerBetter(runtimes, best.runtime) +
-          0.4 * percentileLowerBetter(memories, best.memory);
-        problemScore.set(key, 60 + 40 * efficiency);
-      } else {
-        problemScore.set(key, 60 * best.ratio);
-      }
-    }
-  }
-
-  const weekProblems = new Map();
-  for (const problem of contestProblems) {
-    const weekKey = taipeiWeekKey(problem.opens_at);
-    weekProblems.set(weekKey, [...(weekProblems.get(weekKey) || []), problem.id]);
-  }
-  const weekKeys = [...weekProblems.keys()];
-
-  const leaderboard = students
-    .map((student) => {
-      let weekScoreSum = 0;
-      for (const weekKey of weekKeys) {
-        const ids = weekProblems.get(weekKey);
-        let sum = 0;
-        for (const problemId of ids) {
-          sum += problemScore.get(`${student.id}:${problemId}`) || 0;
-        }
-        weekScoreSum += ids.length ? sum / ids.length : 0;
-      }
-      let settledSolved = 0;
-      for (const problem of contestProblems) {
-        const best = bestByKey.get(`${student.id}:${problem.id}`);
-        if (best && best.solved) settledSolved += 1;
-      }
-      return {
+  const totals = new Map(
+    students.map((student) => [
+      student.id,
+      {
+        userId: student.id,
         name: student.name,
         studentId: student.student_id,
-        semesterScore: round2(weekScoreSum / weekKeys.length),
-        settledSolved,
-        settledProblemCount: contestProblems.length,
-        weeksCounted: weekKeys.length,
-        totalSubmissions: submissionCount.get(student.id) || 0
+        rankSum: 0,
+        problemScoreSum: 0,
+        solvedProblems: 0,
+        attemptedProblems: 0,
+        totalSubmissions: 0,
+        totalFailures: 0,
+        totalRuntimeMs: 0
+      }
+    ])
+  );
+
+  for (const problem of problems) {
+    const standings = students.map((student) => {
+      const userSubmissions = submissionsByKey.get(`${student.id}:${problem.id}`) || [];
+      const submitCount = userSubmissions.length;
+      const failCount = userSubmissions.filter((submission) => !submission.passed).length;
+      const bestScore = submitCount ? Math.max(...userSubmissions.map((submission) => submission.score)) : 0;
+      const bestRuntime = submitCount
+        ? userSubmissions
+            .filter((submission) => submission.score === bestScore)
+            .reduce((best, submission) => Math.min(best, submission.runtime_ms || Number.POSITIVE_INFINITY), Number.POSITIVE_INFINITY)
+        : Number.POSITIVE_INFINITY;
+      const solved = userSubmissions.some((submission) => Boolean(submission.passed));
+      const submitEfficiency = submitCount ? 15 / submitCount : 0;
+      const failureEfficiency = submitCount ? 5 / (failCount + 1) : 0;
+      const problemScore = submitCount ? bestScore * 0.8 + submitEfficiency + failureEfficiency : 0;
+      return {
+        userId: student.id,
+        submitCount,
+        failCount,
+        bestScore,
+        bestRuntime,
+        solved,
+        problemScore
       };
-    })
+    });
+
+    standings.sort((a, b) => {
+      if (b.problemScore !== a.problemScore) return b.problemScore - a.problemScore;
+      if (b.bestScore !== a.bestScore) return b.bestScore - a.bestScore;
+      if (a.failCount !== b.failCount) return a.failCount - b.failCount;
+      if (a.submitCount !== b.submitCount) return a.submitCount - b.submitCount;
+      return a.userId - b.userId;
+    });
+
+    standings.forEach((standing, index) => {
+      const total = totals.get(standing.userId);
+      const rank = standing.submitCount ? index + 1 : students.length;
+      total.rankSum += rank;
+      total.problemScoreSum += standing.problemScore;
+      total.solvedProblems += standing.solved ? 1 : 0;
+      total.attemptedProblems += standing.submitCount ? 1 : 0;
+      total.totalSubmissions += standing.submitCount;
+      total.totalFailures += standing.failCount;
+      total.totalRuntimeMs += Number.isFinite(standing.bestRuntime) ? standing.bestRuntime : 0;
+    });
+  }
+
+  const leaderboard = [...totals.values()]
+    .map((total) => ({
+      ...total,
+      averageRank: round2(total.rankSum / problems.length),
+      averageProblemScore: round2(total.problemScoreSum / problems.length)
+    }))
     .sort((a, b) => {
-      if (b.semesterScore !== a.semesterScore) return b.semesterScore - a.semesterScore;
-      if (b.settledSolved !== a.settledSolved) return b.settledSolved - a.settledSolved;
+      if (a.averageRank !== b.averageRank) return a.averageRank - b.averageRank;
+      if (b.solvedProblems !== a.solvedProblems) return b.solvedProblems - a.solvedProblems;
+      if (b.averageProblemScore !== a.averageProblemScore) return b.averageProblemScore - a.averageProblemScore;
       if (a.totalSubmissions !== b.totalSubmissions) return a.totalSubmissions - b.totalSubmissions;
+      if (a.totalFailures !== b.totalFailures) return a.totalFailures - b.totalFailures;
       return a.name.localeCompare(b.name);
     })
-    .map((entry, index) => ({ rank: index + 1, ...entry }));
+    .map((entry, index) => ({
+      rank: index + 1,
+      name: entry.name,
+      studentId: entry.studentId,
+      averageRank: entry.averageRank,
+      averageProblemScore: entry.averageProblemScore,
+      solvedProblems: entry.solvedProblems,
+      attemptedProblems: entry.attemptedProblems,
+      totalSubmissions: entry.totalSubmissions,
+      totalFailures: entry.totalFailures,
+      totalRuntimeMs: entry.totalRuntimeMs,
+      problemCount: problems.length
+    }));
 
-  return { leaderboard, explanation, weekCount: weekKeys.length, contestProblemCount: contestProblems.length };
-}
-
-function pickBetterBest(a, b) {
-  if (a.solved !== b.solved) return a.solved ? a : b;
-  if (a.solved) {
-    if (a.runtime !== b.runtime) return a.runtime <= b.runtime ? a : b;
-    return a.memory <= b.memory ? a : b;
-  }
-  return a.ratio >= b.ratio ? a : b;
-}
-
-function percentileLowerBetter(values, myValue) {
-  const n = values.length;
-  if (n <= 1) return 1;
-  const better = values.filter((value) => value < myValue).length;
-  return 1 - better / (n - 1);
-}
-
-function taipeiWeekKey(iso) {
-  const ts = Date.parse(iso);
-  if (Number.isNaN(ts)) return "unknown";
-  const taipei = new Date(ts + 8 * 3600 * 1000);
-  const mondayOffset = (taipei.getUTCDay() + 6) % 7;
-  const monday = new Date(taipei.getTime() - mondayOffset * 24 * 3600 * 1000);
-  const pad = (n) => String(n).padStart(2, "0");
-  return `${monday.getUTCFullYear()}-${pad(monday.getUTCMonth() + 1)}-${pad(monday.getUTCDate())}`;
-}
-
-function parseSqliteUtc(text) {
-  if (!text) return NaN;
-  const str = String(text).trim();
-  const normalized = str.includes("T") ? str : str.replace(" ", "T");
-  if (normalized.endsWith("Z") || /[+-]\d\d:?\d\d$/.test(normalized)) return Date.parse(normalized);
-  return Date.parse(normalized + "Z");
+  return { leaderboard, explanation, problemCount: problems.length };
 }
 
 function round2(value) {
