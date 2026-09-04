@@ -1819,3 +1819,62 @@ input:disabled {
   font-size: 13px;
   padding: 4px 6px;
 }
+
+/* 週賽 Phase 5：競賽專頁 */
+.contest-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+}
+.contest-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 18px;
+  border-radius: 14px;
+  background: #1b1e26;
+  border: 1px solid #2a2f3a;
+}
+.contest-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.contest-card h2 {
+  margin: 0;
+  font-size: 18px;
+}
+.contest-card-cat {
+  margin: 0;
+  font-size: 13px;
+  color: #9aa4b2;
+}
+.contest-countdown {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #12151c;
+}
+.contest-countdown-label {
+  font-size: 12px;
+  color: #9aa4b2;
+}
+.contest-countdown-value {
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 22px;
+  font-weight: 700;
+  color: #0f9d58;
+  font-variant-numeric: tabular-nums;
+}
+.contest-card-deadline {
+  margin: 0;
+  font-size: 12px;
+  color: #6b7280;
+}
+.contest-card .primary-button {
+  margin-top: auto;
+}

@@ -6,7 +6,7 @@ import type {
   UIEvent
 } from "react";
 
-type View = "problems" | "workspace" | "auth" | "tutorial" | "leaderboard" | "progress" | "teacher";
+type View = "problems" | "workspace" | "auth" | "tutorial" | "leaderboard" | "progress" | "teacher" | "contest";
 type AuthMode = "login" | "register";
 type DifficultyFilter = "all" | "1" | "2" | "3";
 type Language = "zh" | "en";
@@ -200,6 +200,7 @@ const COPY = {
     languageLabel: "切換成英文",
     nav: {
       problems: "題庫",
+      contest: "競賽",
       leaderboard: "排行榜",
       progress: "進度",
       guide: "指南",
@@ -307,6 +308,14 @@ const COPY = {
         ["3. 上傳題目", "老師可在教師後台建立中英文題目、測資與 starter function，預設建立後立即開放。"]
       ]
     },
+    contest: {
+      title: "本週競賽",
+      intro: "本週的競賽題與剩餘時間。把握時間，越快、越省記憶體分數越高。",
+      empty: "目前沒有進行中的競賽。競賽開放時會出現在這裡。",
+      remaining: "剩餘時間",
+      closed: "已結束",
+      enter: "進入作答"
+    },
     leaderboard: {
       title: "排行榜",
       intro: "只計算競賽題：每週 2 題，關閉結算後列入計分。",
@@ -407,6 +416,7 @@ const COPY = {
     languageLabel: "Switch to Chinese",
     nav: {
       problems: "Problems",
+      contest: "Contest",
       leaderboard: "Leaderboard",
       progress: "Progress",
       guide: "Guide",
@@ -513,6 +523,14 @@ const COPY = {
         ["2. Solve", "Inside a problem, edit code directly and drag the splitters to resize Description, Code, and Testcase panels."],
         ["3. Upload", "Teachers can create bilingual problems, test cases, and starter functions in Teacher. New problems are open by default."]
       ]
+    },
+    contest: {
+      title: "This Week's Contest",
+      intro: "This week's contest problems and the time left. Faster and leaner code scores higher.",
+      empty: "No contest is running right now. Contest problems appear here when open.",
+      remaining: "Time left",
+      closed: "Ended",
+      enter: "Start"
     },
     leaderboard: {
       title: "Leaderboard",
@@ -1130,6 +1148,7 @@ function App() {
 
         {view === "tutorial" && <TutorialView copy={copy} />}
         {view === "leaderboard" && <LeaderboardView leaderboard={leaderboard} explanation={leaderboardExplanation} language={language} copy={copy} />}
+        {view === "contest" && <ContestView problems={problems} language={language} copy={copy} onOpenProblem={openProblem} />}
         {view === "progress" && <ProgressView user={user} progress={progress} language={language} copy={copy} />}
         {view === "teacher" && (
           <TeacherView
@@ -1185,6 +1204,9 @@ function Topbar({
         <nav className="nav" aria-label={copy.nav.menu}>
           <button className={view === "problems" || view === "workspace" ? "nav-link active" : "nav-link"} onClick={() => onView("problems")}>
             {copy.nav.problems}
+          </button>
+          <button className={view === "contest" ? "nav-link active" : "nav-link"} onClick={() => onView("contest")}>
+            {copy.nav.contest}
           </button>
           <button className={view === "leaderboard" ? "nav-link active" : "nav-link"} onClick={() => onView("leaderboard")}>
             {copy.nav.leaderboard}
@@ -2000,6 +2022,72 @@ function TutorialView({ copy }: { copy: Copy }) {
           </article>
         ))}
       </section>
+    </section>
+  );
+}
+
+function formatRemaining(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const d = Math.floor(total / 86400);
+  const h = Math.floor((total % 86400) / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return d > 0 ? `${d}d ${pad(h)}:${pad(m)}:${pad(s)}` : `${pad(h)}:${pad(m)}:${pad(s)}`;
+}
+
+function ContestView({
+  problems,
+  language,
+  copy,
+  onOpenProblem
+}: {
+  problems: Problem[];
+  language: Language;
+  copy: Copy;
+  onOpenProblem: (slug: string) => void;
+}) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  const active = problems.filter((problem) => problem.contestStatus === "active");
+
+  return (
+    <section className="page-stack">
+      <div className="page-heading">
+        <div>
+          <h1>{copy.contest.title}</h1>
+          <p>{copy.contest.intro}</p>
+        </div>
+      </div>
+      {active.length === 0 ? (
+        <section className="panel"><p className="empty-state">{copy.contest.empty}</p></section>
+      ) : (
+        <div className="contest-grid">
+          {active.map((problem) => {
+            const remaining = problem.closesAt ? Date.parse(problem.closesAt) - now : 0;
+            const solved = Number(problem.bestScore ?? 0) >= 100;
+            return (
+              <article className="contest-card" key={problem.slug}>
+                <div className="contest-card-top">
+                  <span className={`difficulty d${problem.difficulty}`}>{difficultyLabel(problem.difficulty, copy)}</span>
+                  {solved && <span className="solved-chip">{copy.common.solved} ✓</span>}
+                </div>
+                <h2>{displayProblemTitle(problem, language)}</h2>
+                <p className="contest-card-cat">{displayCategory(problem, language)}</p>
+                <div className="contest-countdown">
+                  <span className="contest-countdown-label">{copy.contest.remaining}</span>
+                  <span className="contest-countdown-value">{remaining > 0 ? formatRemaining(remaining) : copy.contest.closed}</span>
+                </div>
+                {problem.closesAt && <p className="contest-card-deadline">{copy.common.contestEndsAt} {formatTaipei(problem.closesAt)}</p>}
+                <button className="primary-button" onClick={() => onOpenProblem(problem.slug)}>{copy.contest.enter}</button>
+              </article>
+            );
+          })}
+        </div>
+      )}
     </section>
   );
 }
