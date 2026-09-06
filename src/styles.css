@@ -1878,3 +1878,18 @@ input:disabled {
 .contest-card .primary-button {
   margin-top: auto;
 }
+
+/* pandas 題型標籤 */
+.kind-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.kind-chip.pandas {
+  background: #f3e8ff;
+  color: #7c3aed;
+}

@@ -6,7 +6,7 @@ import { config } from "./config.mjs";
 import { buildProblemBank } from "./problem-bank.mjs";
 
 let db;
-const PROBLEM_BANK_VERSION = "2026-08-pure-python-unit-bank-v3";
+const PROBLEM_BANK_VERSION = "2026-09-pandas-pilot-v1";
 
 export function getDb() {
   if (!db) {
@@ -150,6 +150,7 @@ function migrate(database) {
   ensureColumn(database, "problems", "opens_at", "opens_at TEXT");
   ensureColumn(database, "problems", "closes_at", "closes_at TEXT");
   ensureColumn(database, "submissions", "peak_memory", "peak_memory INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(database, "problems", "kind", "kind TEXT NOT NULL DEFAULT 'python'");
 }
 
 function ensureColumn(database, table, column, definition) {
@@ -229,14 +230,14 @@ function replaceProblemBank(database) {
       series_title_en, title_en, category_en,
       function_name, signature_json, statement, statement_en, input_format, input_format_en,
       output_format, output_format_en, constraints_text, constraints_text_en,
-      starter_code, is_open
+      starter_code, is_open, kind
     )
     VALUES (
       @slug, @week, @seriesTitle, @title, @difficulty, @category, @timeLimitSeconds,
       @seriesTitleEn, @titleEn, @categoryEn,
       @functionName, @signatureJson, @statement, @statementEn, @inputFormat, @inputFormatEn,
       @outputFormat, @outputFormatEn, @constraintsText, @constraintsTextEn,
-      @starterCode, 1
+      @starterCode, 1, @kind
     )
   `);
   const insertCase = database.prepare(`

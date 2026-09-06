@@ -8,6 +8,9 @@ import tracemalloc
 import traceback
 import sys
 
+import numpy as np
+import pandas as pd
+
 
 FORBIDDEN_IMPORTS = {
     "os",
@@ -20,6 +23,11 @@ FORBIDDEN_IMPORTS = {
     "threading",
     "requests",
     "urllib",
+    "builtins",
+    "importlib",
+    "ctypes",
+    "pickle",
+    "marshal",
 }
 FORBIDDEN_CALLS = {
     "open",
@@ -29,6 +37,16 @@ FORBIDDEN_CALLS = {
     "__import__",
     "input",
     "breakpoint",
+}
+FORBIDDEN_ATTR_CALLS = {
+    "read_csv", "read_excel", "read_json", "read_pickle", "read_parquet",
+    "read_sql", "read_sql_query", "read_sql_table", "read_html", "read_hdf",
+    "read_feather", "read_orc", "read_table", "read_fwf", "read_clipboard",
+    "read_stata", "read_sas", "read_spss", "read_xml",
+    "to_csv", "to_excel", "to_json", "to_pickle", "to_parquet", "to_sql",
+    "to_hdf", "to_feather", "to_orc", "to_stata", "to_clipboard", "to_xml",
+    "load", "loadtxt", "genfromtxt", "fromfile", "memmap",
+    "save", "savetxt", "savez", "savez_compressed",
 }
 
 
@@ -49,23 +67,24 @@ class SafetyVisitor(ast.NodeVisitor):
     def visit_Call(self, node):
         if isinstance(node.func, ast.Name) and node.func.id in FORBIDDEN_CALLS:
             raise ValueError(f"不允許呼叫 {node.func.id}()")
+        if isinstance(node.func, ast.Attribute) and node.func.attr in FORBIDDEN_ATTR_CALLS:
+            raise ValueError(f"不允許呼叫 {node.func.attr}()")
         self.generic_visit(node)
 
 
 def to_jsonable(value):
-    if hasattr(value, "to_dict"):
-        try:
-            if value.__class__.__name__ == "DataFrame":
-                return value.to_dict(orient="records")
-            return value.to_dict()
-        except TypeError:
-            return value.to_dict()
-    if hasattr(value, "tolist"):
-        return value.tolist()
+    if isinstance(value, pd.DataFrame):
+        return [to_jsonable(record) for record in value.to_dict(orient="records")]
+    if isinstance(value, pd.Series):
+        return to_jsonable(value.tolist())
+    if isinstance(value, np.generic):
+        value = value.item()
     if isinstance(value, dict):
         return {str(k): to_jsonable(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
         return [to_jsonable(v) for v in value]
+    if hasattr(value, "tolist"):
+        return to_jsonable(value.tolist())
     if isinstance(value, float):
         if math.isnan(value) or math.isinf(value):
             return None
@@ -73,7 +92,20 @@ def to_jsonable(value):
     return value
 
 
+def limit_stdout(value):
+    if len(value) <= 20000:
+        return value
+    return value[:20000] + "\n...[stdout truncated]"
+
+
 def main():
+    try:
+        import resource
+        limit = 1024 * 1024 * 1024
+        resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
+    except Exception:
+        pass
+
     payload = json.loads(sys.stdin.read())
     code = payload["code"]
     function_name = payload["functionName"]
@@ -85,6 +117,10 @@ def main():
     namespace = {
         "math": math,
         "statistics": statistics,
+        "np": np,
+        "numpy": np,
+        "pd": pd,
+        "pandas": pd,
     }
     setup_stdout = io.StringIO()
     with contextlib.redirect_stdout(setup_stdout):
@@ -131,12 +167,6 @@ def main():
         pending_setup_stdout = ""
 
     print(json.dumps({"ok": True, "results": results}, ensure_ascii=True))
-
-
-def limit_stdout(value):
-    if len(value) <= 20000:
-        return value
-    return value[:20000] + "\n...[stdout truncated]"
 
 
 if __name__ == "__main__":

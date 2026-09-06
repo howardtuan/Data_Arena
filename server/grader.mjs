@@ -145,7 +145,7 @@ function buildDetail(testCase, { passed, expected, actual, error, stdout, messag
 function spawnPython(payload) {
   return new Promise((resolve) => {
     const child = spawn(config.pythonBin, [runnerPath], {
-      env: { ...process.env, PYTHONIOENCODING: "utf-8" },
+      env: { ...process.env, PYTHONIOENCODING: "utf-8", OMP_NUM_THREADS: "1", OPENBLAS_NUM_THREADS: "1", MKL_NUM_THREADS: "1", NUMEXPR_NUM_THREADS: "1", PYTHONHASHSEED: "0" },
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true
     });
@@ -197,6 +197,9 @@ function compareResult(actual, expected, comparator) {
   if (comparator === "customOutput") {
     return { passed: true, message: "自訂輸出已執行" };
   }
+  if (comparator === "table") {
+    return compareTable(actual, expected);
+  }
   if (comparator === "number") {
     return compareNumber(actual, expected);
   }
@@ -235,6 +238,21 @@ function deepEqualNumber(actual, expected) {
     );
   }
   return deepEqualStrict(actual, expected);
+}
+
+function compareTable(actual, expected) {
+  if (!Array.isArray(actual) || !Array.isArray(expected)) {
+    const passed = deepEqualNumber(actual, expected);
+    return { passed, message: passed ? "Accepted" : "輸出與預期不一致" };
+  }
+  if (actual.length !== expected.length) {
+    return { passed: false, message: "輸出列數與預期不一致" };
+  }
+  const key = (row) => JSON.stringify(normalizeForCompare(row));
+  const actualKeys = actual.map(key).sort();
+  const expectedKeys = expected.map(key).sort();
+  const passed = actualKeys.every((value, index) => value === expectedKeys[index]);
+  return { passed, message: passed ? "Accepted" : "輸出與預期不一致（比對列集合，順序不限）" };
 }
 
 function deepEqualStrict(actual, expected) {

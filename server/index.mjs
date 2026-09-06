@@ -739,6 +739,7 @@ function publicProblem(row) {
     constraintsText: row.constraints_text,
     constraintsTextEn: row.constraints_text_en || "",
     starterCode: row.starter_code,
+    kind: row.kind || "python",
     isOpen: Boolean(row.is_open),
     isContest: Boolean(row.is_contest),
     opensAt: row.opens_at || null,
