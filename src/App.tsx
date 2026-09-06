@@ -9,6 +9,7 @@ import type {
 type View = "problems" | "workspace" | "auth" | "tutorial" | "leaderboard" | "progress" | "teacher" | "contest";
 type AuthMode = "login" | "register";
 type DifficultyFilter = "all" | "1" | "2" | "3";
+type KindFilter = "all" | "python" | "pandas";
 type Language = "zh" | "en";
 type ProblemPanelTab = "description" | "submissions";
 
@@ -57,6 +58,7 @@ type Problem = {
   opensAt?: string | null;
   closesAt?: string | null;
   contestStatus?: "upcoming" | "active" | "ended" | null;
+  kind?: "python" | "pandas";
   bestScore?: number | null;
   submissions?: number;
   publicTests?: PublicTest[];
@@ -260,6 +262,9 @@ const COPY = {
       count: (shown: number, total: number) => `${shown}/${total} 題`,
       searchPlaceholder: "搜尋題目",
       difficultyLabel: "難度篩選",
+      kindLabel: "題型篩選",
+      kindPython: "Python",
+      kindPandas: "pandas",
       all: "全部",
       solved: (solved: number, total: number) => `${solved}/${total} 已解`,
       empty: "目前沒有符合條件的題目。"
@@ -476,6 +481,9 @@ const COPY = {
       count: (shown: number, total: number) => `${shown}/${total} problems`,
       searchPlaceholder: "Search problems",
       difficultyLabel: "Difficulty filter",
+      kindLabel: "Type filter",
+      kindPython: "Python",
+      kindPandas: "pandas",
       all: "All",
       solved: (solved: number, total: number) => `${solved}/${total} Solved`,
       empty: "No problems match the current filters."
@@ -728,6 +736,7 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
   const [difficultyFilter, setDifficultyFilter] = useState<DifficultyFilter>("all");
+  const [kindFilter, setKindFilter] = useState<KindFilter>("all");
   const [workspaceSplit, setWorkspaceSplit] = useState(43);
   const [testSplit, setTestSplit] = useState(64);
   const [submissionRefreshKey, setSubmissionRefreshKey] = useState(0);
@@ -1107,8 +1116,10 @@ function App() {
             copy={copy}
             search={search}
             difficultyFilter={difficultyFilter}
+            kindFilter={kindFilter}
             onSearch={setSearch}
             onDifficultyFilter={setDifficultyFilter}
+            onKindFilter={setKindFilter}
             onOpenProblem={openProblem}
           />
         )}
@@ -1313,8 +1324,10 @@ function ProblemListView({
   copy,
   search,
   difficultyFilter,
+  kindFilter,
   onSearch,
   onDifficultyFilter,
+  onKindFilter,
   onOpenProblem
 }: {
   user: User | null;
@@ -1324,8 +1337,10 @@ function ProblemListView({
   copy: Copy;
   search: string;
   difficultyFilter: DifficultyFilter;
+  kindFilter: KindFilter;
   onSearch: (value: string) => void;
   onDifficultyFilter: (value: DifficultyFilter) => void;
+  onKindFilter: (value: KindFilter) => void;
   onOpenProblem: (slug: string) => void;
 }) {
   const filteredProblems = useMemo(() => {
@@ -1335,9 +1350,10 @@ function ProblemListView({
       const category = `${displayCategory(problem, language)} ${displayCategory(problem, language === "zh" ? "en" : "zh")}`.toLowerCase();
       const matchesSearch = !normalizedSearch || title.includes(normalizedSearch) || category.includes(normalizedSearch) || problem.functionName.includes(normalizedSearch);
       const matchesDifficulty = difficultyFilter === "all" || String(problem.difficulty) === difficultyFilter;
-      return matchesSearch && matchesDifficulty;
+      const matchesKind = kindFilter === "all" || (problem.kind || "python") === kindFilter;
+      return matchesSearch && matchesDifficulty && matchesKind;
     });
-  }, [problems, search, difficultyFilter, language]);
+  }, [problems, search, difficultyFilter, kindFilter, language]);
 
   const solved = problems.filter((problem) => Number(problem.bestScore ?? 0) >= 100).length;
 
@@ -1363,6 +1379,11 @@ function ProblemListView({
             <option value="2">{copy.difficulties[2]}</option>
             <option value="3">{copy.difficulties[3]}</option>
           </select>
+          <select value={kindFilter} onChange={(event) => onKindFilter(event.target.value as KindFilter)} aria-label={copy.problems.kindLabel}>
+            <option value="all">{copy.problems.all}</option>
+            <option value="python">{copy.problems.kindPython}</option>
+            <option value="pandas">{copy.problems.kindPandas}</option>
+          </select>
           <div className="solved-counter">
             <span className="progress-ring" />
             {copy.problems.solved(solved, problems.length)}
@@ -1378,6 +1399,7 @@ function ProblemListView({
                 <span className={Number(problem.bestScore ?? 0) >= 100 ? "row-status solved" : "row-status"}>{Number(problem.bestScore ?? 0) >= 100 ? "✓" : ""}</span>
                 <strong>{index + 1}. {displayProblemTitle(problem, language)}</strong>
                 <span className="row-category">{displayCategory(problem, language)}</span>
+                {problem.kind === "pandas" && <span className="kind-chip pandas">pandas</span>}
                 <span className={`difficulty d${problem.difficulty}`}>{difficultyLabel(problem.difficulty, copy)}</span>
                 {problem.contestStatus === "active" && <span className="contest-chip live">{copy.common.contestLive}</span>}
                 <span className={problem.isOpen ? "lock-icon" : "lock-icon closed"}>{problem.isOpen ? "▮▮" : "🔒"}</span>

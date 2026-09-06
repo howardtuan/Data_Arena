@@ -13,6 +13,7 @@ const weekTitles = {
   7: { zh: "分類三：類神經網路", en: "Classification III: Artificial Neural Networks" },
   8: { zh: "關聯規則：Apriori", en: "Association Rules: Apriori" },
   9: { zh: "相似度學習與分群", en: "Similarity-Based Learning & Clustering" },
+  10: { zh: "pandas 練習", en: "pandas Practice" },
 };
 
 const problemSpecs = [
@@ -6217,6 +6218,66 @@ const problemSpecs = [
         "points": 1
       }
     ]
+  },
+  {
+    "week": 10, "index": 1, "name": "big-parks",
+    "title": "篩選大型公園", "titleEn": "Filter Large Parks",
+    "difficulty": 1, "category": "資料篩選（pandas）", "categoryEn": "Data Filtering (pandas)",
+    "functionName": "big_parks", "signature": ["park"], "kind": "pandas",
+    "statement": "park 是一張表（list[dict]），每列有 park_id、name、area、annual_visitors。請用 pandas 找出「面積 area ≥ 3000000 或 年訪客 annual_visitors ≥ 25000000」的公園，回傳只含 name、annual_visitors、area 三欄的表（列的順序不限）。\n\n【計算示範】\nA：area=3200000 → 面積達標，列入；B：area=1000000 但 annual_visitors=26000000 → 訪客達標，列入；C：兩者皆不足 → 不列入。\n\n提示：pd、np 已載入，可直接使用、不需 import；用 pd.DataFrame(park) 轉成表。",
+    "statementEn": "park is a table (list[dict]) with park_id, name, area, annual_visitors. Using pandas, return parks whose area >= 3000000 OR annual_visitors >= 25000000, keeping only columns name, annual_visitors, area (row order does not matter).\n\nExample: area=3200000 qualifies; area=1000000 but visitors=26000000 also qualifies; neither excluded.\n\nNote: pd and np are preloaded (no import needed); use pd.DataFrame(park).",
+    "inputFormat": "park: list[dict]，每列含 park_id, name, area, annual_visitors。",
+    "inputFormatEn": "park: list[dict] with park_id, name, area, annual_visitors.",
+    "outputFormat": "回傳表（DataFrame 或 list[dict]），只含 name, annual_visitors, area 三欄；列順序不限。",
+    "outputFormatEn": "A table with only name, annual_visitors, area; any row order.",
+    "constraintsText": "條件是「或」：面積或訪客任一達標即列入。\n不需載入任何檔案，park 已是參數。",
+    "constraintsTextEn": "Condition is OR: qualifies if either meets the threshold.\nNo file loading; park is the argument.",
+    "starterCode": "def big_parks(park):\n    # pd、np 已可直接使用（不需 import）\n    df = pd.DataFrame(park)\n    # TODO: 篩選並回傳 name, annual_visitors, area 三欄\n    pass\n",
+    "tests": [
+      {"name":"Sample 1","visibility":"public","comparator":"table","args":[[{"park_id":1,"name":"Alpha","area":3200000,"annual_visitors":10000000},{"park_id":2,"name":"Beta","area":1000000,"annual_visitors":26000000},{"park_id":3,"name":"Gamma","area":500000,"annual_visitors":9000000}]],"expected":[{"name":"Alpha","annual_visitors":10000000,"area":3200000},{"name":"Beta","annual_visitors":26000000,"area":1000000}]},
+      {"name":"Sample 2","visibility":"public","comparator":"table","args":[[{"park_id":10,"name":"Lake","area":3000000,"annual_visitors":100},{"park_id":11,"name":"Hill","area":2999999,"annual_visitors":24999999}]],"expected":[{"name":"Lake","annual_visitors":100,"area":3000000}]},
+      {"name":"Hidden 1","visibility":"hidden","comparator":"table","args":[[{"park_id":5,"name":"P1","area":9999999,"annual_visitors":0},{"park_id":6,"name":"P2","area":1,"annual_visitors":25000000},{"park_id":7,"name":"P3","area":2,"annual_visitors":3}]],"expected":[{"name":"P1","annual_visitors":0,"area":9999999},{"name":"P2","annual_visitors":25000000,"area":1}]}
+    ]
+  },
+  {
+    "week": 10, "index": 2, "name": "top-ordering-customer",
+    "title": "下單最多的顧客", "titleEn": "Top Ordering Customer",
+    "difficulty": 1, "category": "分組聚合（pandas）", "categoryEn": "Aggregation (pandas)",
+    "functionName": "top_ordering_customer", "signature": ["orders"], "kind": "pandas",
+    "statement": "orders 是訂單表，每列有 order_number、customer_number。請回傳「下單筆數最多」的 customer_number（本題保證答案唯一）。\n\n【計算示範】\n顧客 7 有 3 筆、顧客 5 有 1 筆 → 回傳 7。\n\n提示：pd 已載入；可用 value_counts() 或 groupby 計數。回傳整數。",
+    "statementEn": "orders has order_number, customer_number. Return the customer_number with the most orders (unique answer).\n\nExample: customer 7 has 3, customer 5 has 1 → return 7.\n\nNote: pd is preloaded; value_counts() or groupby works. Return an integer.",
+    "inputFormat": "orders: list[dict]，每列含 order_number, customer_number。",
+    "inputFormatEn": "orders: list[dict] with order_number, customer_number.",
+    "outputFormat": "回傳整數：下單最多的 customer_number。",
+    "outputFormatEn": "An integer: the customer_number with the most orders.",
+    "constraintsText": "答案唯一（下單最多的顧客只有一位）。\n回傳整數（int）。",
+    "constraintsTextEn": "Answer is unique.\nReturn an int.",
+    "starterCode": "def top_ordering_customer(orders):\n    df = pd.DataFrame(orders)\n    # TODO: 回傳下單最多的 customer_number（整數）\n    pass\n",
+    "tests": [
+      {"name":"Sample 1","visibility":"public","comparator":"number","args":[[{"order_number":1,"customer_number":7},{"order_number":2,"customer_number":7},{"order_number":3,"customer_number":5},{"order_number":4,"customer_number":7}]],"expected":7},
+      {"name":"Sample 2","visibility":"public","comparator":"number","args":[[{"order_number":1,"customer_number":3},{"order_number":2,"customer_number":9},{"order_number":3,"customer_number":9}]],"expected":9},
+      {"name":"Hidden 1","visibility":"hidden","comparator":"number","args":[[{"order_number":1,"customer_number":100},{"order_number":2,"customer_number":100},{"order_number":3,"customer_number":100},{"order_number":4,"customer_number":42},{"order_number":5,"customer_number":42}]],"expected":100}
+    ]
+  },
+  {
+    "week": 10, "index": 3, "name": "unique-subjects-per-teacher",
+    "title": "每位講師的不重複科目數", "titleEn": "Distinct Subjects per Teacher",
+    "difficulty": 1, "category": "分組聚合（pandas）", "categoryEn": "Aggregation (pandas)",
+    "functionName": "unique_subjects_per_teacher", "signature": ["teacher"], "kind": "pandas",
+    "statement": "teacher 表每列有 teacher_id、subject_id、dept_id（同一科目可能在不同系所各出現一次）。請回傳每位 teacher_id 教授的「不重複科目數」，欄位為 teacher_id 與 cnt（列順序不限）。\n\n【計算示範】\n講師 1 教 {10,10,20} → 不重複科目 2 種 → cnt=2。\n\n提示：pd 已載入；可用 groupby(...)[...].nunique()。",
+    "statementEn": "teacher has teacher_id, subject_id, dept_id (a subject may appear under different departments). Return the number of DISTINCT subjects per teacher_id, columns teacher_id and cnt (any row order).\n\nExample: teacher 1 teaches {10,10,20} → 2 distinct → cnt=2.\n\nNote: pd is preloaded; groupby(...)[...].nunique() works.",
+    "inputFormat": "teacher: list[dict]，每列含 teacher_id, subject_id, dept_id。",
+    "inputFormatEn": "teacher: list[dict] with teacher_id, subject_id, dept_id.",
+    "outputFormat": "回傳表，欄位 teacher_id、cnt；列順序不限。",
+    "outputFormatEn": "A table with columns teacher_id, cnt; any row order.",
+    "constraintsText": "同一科目在不同 dept 只算一次（用不重複計數 nunique）。",
+    "constraintsTextEn": "Count each subject once even across departments (use nunique).",
+    "starterCode": "def unique_subjects_per_teacher(teacher):\n    df = pd.DataFrame(teacher)\n    # TODO: 回傳 teacher_id 與 cnt（不重複科目數）\n    pass\n",
+    "tests": [
+      {"name":"Sample 1","visibility":"public","comparator":"table","args":[[{"teacher_id":1,"subject_id":10,"dept_id":1},{"teacher_id":1,"subject_id":10,"dept_id":2},{"teacher_id":1,"subject_id":20,"dept_id":1},{"teacher_id":2,"subject_id":30,"dept_id":1}]],"expected":[{"teacher_id":1,"cnt":2},{"teacher_id":2,"cnt":1}]},
+      {"name":"Sample 2","visibility":"public","comparator":"table","args":[[{"teacher_id":5,"subject_id":1,"dept_id":1}]],"expected":[{"teacher_id":5,"cnt":1}]},
+      {"name":"Hidden 1","visibility":"hidden","comparator":"table","args":[[{"teacher_id":3,"subject_id":1,"dept_id":1},{"teacher_id":3,"subject_id":2,"dept_id":1},{"teacher_id":3,"subject_id":3,"dept_id":1},{"teacher_id":4,"subject_id":9,"dept_id":2},{"teacher_id":4,"subject_id":9,"dept_id":3}]],"expected":[{"teacher_id":3,"cnt":3},{"teacher_id":4,"cnt":1}]}
+    ]
   }
 ];
 
@@ -6249,7 +6310,8 @@ function problem(spec) {
     outputFormatEn: spec.outputFormatEn,
     constraintsText: spec.constraintsText,
     constraintsTextEn: spec.constraintsTextEn,
-    starterCode: starter(spec.functionName, spec.signature),
+    starterCode: spec.starterCode || starter(spec.functionName, spec.signature),
+    kind: spec.kind || "python",
     tests: spec.tests
   };
 }

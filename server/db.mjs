@@ -6,7 +6,7 @@ import { config } from "./config.mjs";
 import { buildProblemBank } from "./problem-bank.mjs";
 
 let db;
-const PROBLEM_BANK_VERSION = "2026-08-pure-python-unit-bank-v3";
+const PROBLEM_BANK_VERSION = "2026-09-pandas-pilot-v1";
 
 export function getDb() {
   if (!db) {
@@ -150,6 +150,7 @@ function migrate(database) {
   ensureColumn(database, "problems", "opens_at", "opens_at TEXT");
   ensureColumn(database, "problems", "closes_at", "closes_at TEXT");
   ensureColumn(database, "submissions", "peak_memory", "peak_memory INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(database, "problems", "kind", "kind TEXT NOT NULL DEFAULT 'python'");
 }
 
 function ensureColumn(database, table, column, definition) {
@@ -210,33 +211,26 @@ function seedProblems(database) {
   const problemCount = database.prepare("SELECT COUNT(*) AS count FROM problems").get().count;
   if (currentVersion === PROBLEM_BANK_VERSION && problemCount > 0) return;
 
-  const submissionCount = database.prepare("SELECT COUNT(*) AS count FROM submissions").get().count;
-  if (submissionCount > 0 && problemCount > 0) {
-    console.warn(
-      `Problem bank version ${PROBLEM_BANK_VERSION} is available, but existing submissions were found. ` +
-        "Skipping automatic destructive replacement; run reset-db when you are ready to reseed."
-    );
-    return;
-  }
-
-  replaceProblemBank(database);
+  // 非破壞式：只新增題庫裡目前資料庫還沒有的題目（依 slug 判斷），
+  // 不刪除任何既有題目、提交或使用者資料。
+  syncProblemBank(database);
 }
 
-function replaceProblemBank(database) {
+function syncProblemBank(database) {
   const insertProblem = database.prepare(`
     INSERT INTO problems (
       slug, week, series_title, title, difficulty, category, time_limit_seconds,
       series_title_en, title_en, category_en,
       function_name, signature_json, statement, statement_en, input_format, input_format_en,
       output_format, output_format_en, constraints_text, constraints_text_en,
-      starter_code, is_open
+      starter_code, is_open, kind
     )
     VALUES (
       @slug, @week, @seriesTitle, @title, @difficulty, @category, @timeLimitSeconds,
       @seriesTitleEn, @titleEn, @categoryEn,
       @functionName, @signatureJson, @statement, @statementEn, @inputFormat, @inputFormatEn,
       @outputFormat, @outputFormatEn, @constraintsText, @constraintsTextEn,
-      @starterCode, 1
+      @starterCode, 1, @kind
     )
   `);
   const insertCase = database.prepare(`
@@ -244,13 +238,12 @@ function replaceProblemBank(database) {
     VALUES (@problemId, @name, @visibility, @argsJson, @expectedJson, @comparator, @points)
   `);
 
+  const existingSlugs = new Set(
+    database.prepare("SELECT slug FROM problems").all().map((row) => row.slug)
+  );
   const transaction = database.transaction((problems) => {
-    database.prepare("DELETE FROM attempts").run();
-    database.prepare("DELETE FROM submissions").run();
-    database.prepare("DELETE FROM test_cases").run();
-    database.prepare("DELETE FROM problems").run();
-
     for (const problem of problems) {
+      if (existingSlugs.has(problem.slug)) continue;
       const result = insertProblem.run({
         ...problem,
         signatureJson: JSON.stringify(problem.signature)

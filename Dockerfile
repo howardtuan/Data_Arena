@@ -7,9 +7,12 @@ ENV PORT=8080 \
     PYTHON_BIN=python3
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends python3 make g++ \
+  && apt-get install -y --no-install-recommends python3 python3-pip make g++ \
   && rm -rf /var/lib/apt/lists/* \
   && corepack enable
+
+COPY requirements.txt ./
+RUN pip3 install --no-cache-dir --break-system-packages -r requirements.txt
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile --prod=false
