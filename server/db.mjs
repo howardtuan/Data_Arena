@@ -211,19 +211,12 @@ function seedProblems(database) {
   const problemCount = database.prepare("SELECT COUNT(*) AS count FROM problems").get().count;
   if (currentVersion === PROBLEM_BANK_VERSION && problemCount > 0) return;
 
-  const submissionCount = database.prepare("SELECT COUNT(*) AS count FROM submissions").get().count;
-  if (submissionCount > 0 && problemCount > 0) {
-    console.warn(
-      `Problem bank version ${PROBLEM_BANK_VERSION} is available, but existing submissions were found. ` +
-        "Skipping automatic destructive replacement; run reset-db when you are ready to reseed."
-    );
-    return;
-  }
-
-  replaceProblemBank(database);
+  // 非破壞式：只新增題庫裡目前資料庫還沒有的題目（依 slug 判斷），
+  // 不刪除任何既有題目、提交或使用者資料。
+  syncProblemBank(database);
 }
 
-function replaceProblemBank(database) {
+function syncProblemBank(database) {
   const insertProblem = database.prepare(`
     INSERT INTO problems (
       slug, week, series_title, title, difficulty, category, time_limit_seconds,
@@ -245,13 +238,12 @@ function replaceProblemBank(database) {
     VALUES (@problemId, @name, @visibility, @argsJson, @expectedJson, @comparator, @points)
   `);
 
+  const existingSlugs = new Set(
+    database.prepare("SELECT slug FROM problems").all().map((row) => row.slug)
+  );
   const transaction = database.transaction((problems) => {
-    database.prepare("DELETE FROM attempts").run();
-    database.prepare("DELETE FROM submissions").run();
-    database.prepare("DELETE FROM test_cases").run();
-    database.prepare("DELETE FROM problems").run();
-
     for (const problem of problems) {
+      if (existingSlugs.has(problem.slug)) continue;
       const result = insertProblem.run({
         ...problem,
         signatureJson: JSON.stringify(problem.signature)
