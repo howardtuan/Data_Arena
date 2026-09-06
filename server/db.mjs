@@ -6,7 +6,7 @@ import { config } from "./config.mjs";
 import { buildProblemBank } from "./problem-bank.mjs";
 
 let db;
-const PROBLEM_BANK_VERSION = "2026-09-pandas-pilot-v1";
+const PROBLEM_BANK_VERSION = "2026-09-pandas-full-v2";
 
 export function getDb() {
   if (!db) {
