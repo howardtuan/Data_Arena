@@ -1,4 +1,5 @@
 import path from "node:path";
+import crypto from "node:crypto";
 import bcrypt from "bcryptjs";
 import cors from "cors";
 import express from "express";
@@ -579,6 +580,119 @@ app.get("/api/admin/submissions", requireAdmin, (_req, res) => {
   res.json({ submissions });
 });
 
+// ── 教師帳號管理（僅管理員）──────────────────────────────
+app.get("/api/admin/teachers", requireAdmin, (_req, res) => {
+  const teachers = db
+    .prepare(
+      `SELECT id, name, email, created_at
+       FROM users WHERE role = 'teacher'
+       ORDER BY created_at DESC`
+    )
+    .all();
+  res.json({ teachers });
+});
+
+app.post("/api/admin/teachers", requireAdmin, (req, res) => {
+  const { name, email, password } = req.body || {};
+  const errors = validateTeacherRegistration({ name, email, password });
+  if (errors.length) return res.status(400).json({ error: errors.join("；") });
+  try {
+    const result = db
+      .prepare(
+        `INSERT INTO users (name, email, student_id, password_hash, role)
+         VALUES (@name, @email, NULL, @passwordHash, 'teacher')`
+      )
+      .run({
+        name: String(name).trim(),
+        email: String(email).trim().toLowerCase(),
+        passwordHash: bcrypt.hashSync(password, 12)
+      });
+    res.status(201).json({ user: publicUser(getUserById(result.lastInsertRowid)) });
+  } catch (error) {
+    if (String(error.message).includes("UNIQUE")) {
+      return res.status(409).json({ error: "此 Email 已被註冊" });
+    }
+    throw error;
+  }
+});
+
+// ── 重設密碼（教師或管理員）──────────────────────────────
+// 教師只能重設學生；管理員可重設學生與教師；任何人都不能透過此 API 重設管理員。
+app.post("/api/staff/users/:id/reset-password", requireStaff, (req, res) => {
+  const target = getUserById(Number(req.params.id));
+  if (!target) return res.status(404).json({ error: "找不到使用者" });
+  if (target.role === "admin") {
+    return res.status(403).json({ error: "不可重設管理員密碼" });
+  }
+  if (req.user.role === "teacher" && target.role !== "student") {
+    return res.status(403).json({ error: "教師僅能重設學生密碼" });
+  }
+  const tempPassword = generateTempPassword();
+  db.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(
+    bcrypt.hashSync(tempPassword, 12),
+    target.id
+  );
+  res.json({ user: publicUser(target), tempPassword });
+});
+
+// ── 學生總覽（教師或管理員）──────────────────────────────
+app.get("/api/staff/students", requireStaff, (_req, res) => {
+  const students = db
+    .prepare(
+      `SELECT u.id, u.name, u.email, u.student_id, u.created_at,
+              COALESCE(SUM(pp.cnt), 0) AS submissions,
+              COALESCE(SUM(CASE WHEN pp.solved = 1 THEN 1 ELSE 0 END), 0) AS solved,
+              COALESCE(SUM(pp.best), 0) AS best_score_sum,
+              MAX(pp.last_at) AS last_activity
+       FROM users u
+       LEFT JOIN (
+         SELECT user_id, problem_id, COUNT(*) AS cnt, MAX(score) AS best,
+                MAX(passed) AS solved, MAX(created_at) AS last_at
+         FROM submissions GROUP BY user_id, problem_id
+       ) pp ON pp.user_id = u.id
+       WHERE u.role = 'student'
+       GROUP BY u.id
+       ORDER BY u.name, u.id`
+    )
+    .all();
+  const problemsTotal = db.prepare("SELECT COUNT(*) AS count FROM problems").get().count;
+  const openProblemsTotal = db.prepare("SELECT COUNT(*) AS count FROM problems WHERE is_open = 1").get().count;
+  res.json({ students, problemsTotal, openProblemsTotal });
+});
+
+app.get("/api/staff/students/:id", requireStaff, (req, res) => {
+  const student = getUserById(Number(req.params.id));
+  if (!student || student.role !== "student") {
+    return res.status(404).json({ error: "找不到學生" });
+  }
+  const progress = db
+    .prepare(
+      `SELECT p.id, p.slug, p.title, p.title_en, p.week, p.kind,
+              COUNT(s.id) AS submissions,
+              MAX(s.score) AS best_score,
+              MAX(s.passed) AS solved,
+              MAX(s.created_at) AS last_submission
+       FROM problems p
+       LEFT JOIN submissions s ON s.problem_id = p.id AND s.user_id = ?
+       GROUP BY p.id
+       ORDER BY p.week, p.id`
+    )
+    .all(student.id);
+  // 作答紀錄：不含程式碼
+  const submissions = db
+    .prepare(
+      `SELECT s.id, s.score, s.passed, s.passed_tests, s.total_tests, s.runtime_ms, s.created_at,
+              p.slug, p.title, p.title_en, p.week
+       FROM submissions s
+       JOIN problems p ON p.id = s.problem_id
+       WHERE s.user_id = ?
+       ORDER BY s.created_at DESC
+       LIMIT 100`
+    )
+    .all(student.id);
+  res.json({ student: publicUser(student), progress, submissions });
+});
+
 app.use("/api", (_req, res) => {
   res.status(404).json({ error: "找不到 API" });
 });
@@ -619,6 +733,23 @@ function validateStudentRegistration({ name, email, studentId, password }) {
   return errors;
 }
 
+function validateTeacherRegistration({ name, email, password }) {
+  const errors = [];
+  if (!String(name || "").trim()) errors.push("請輸入姓名");
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(email || ""))) errors.push("Email 格式不正確");
+  if (String(password || "").length < 8) errors.push("密碼至少 8 碼");
+  return errors;
+}
+
+// 產生易讀的臨時密碼（避開易混淆字元），長度 10。
+function generateTempPassword() {
+  const alphabet = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
+  const bytes = crypto.randomBytes(10);
+  let out = "";
+  for (let i = 0; i < 10; i += 1) out += alphabet[bytes[i] % alphabet.length];
+  return out;
+}
+
 function signToken(user) {
   return jwt.sign({ sub: user.id, role: user.role }, config.jwtSecret, { expiresIn: "12h" });
 }
@@ -639,6 +770,17 @@ function requireAdmin(req, res, next) {
   const user = readUserFromRequest(req);
   if (!user) return res.status(401).json({ error: "請先登入" });
   if (user.role !== "admin") return res.status(403).json({ error: "需要管理員權限" });
+  req.user = user;
+  next();
+}
+
+// 教師或管理員都可存取（學生總覽、重設學生密碼等）
+function requireStaff(req, res, next) {
+  const user = readUserFromRequest(req);
+  if (!user) return res.status(401).json({ error: "請先登入" });
+  if (user.role !== "admin" && user.role !== "teacher") {
+    return res.status(403).json({ error: "需要教師或管理員權限" });
+  }
   req.user = user;
   next();
 }
