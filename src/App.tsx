@@ -308,12 +308,24 @@ const COPY = {
     },
     guide: {
       title: "指南",
-      intro: "學生從題庫選題後可直接編輯 Python function，Run 測公開測資，Submit 送公開與隱藏測資。",
-      cards: [
-        ["1. 選題", "題目列表只會顯示老師開放的題目。老師關閉後，學生看不到也不能直接開 URL 作答。"],
-        ["2. 作答", "點進題目後可直接編輯程式碼，也可拖曳左右與上下分隔線調整題目敘述、程式碼、測資三個區塊大小。"],
-        ["3. 上傳題目", "老師可在教師後台建立中英文題目、測資與 starter function，預設建立後立即開放。"]
-      ]
+      studentTab: "學生",
+      teacherTab: "教師",
+      student: {
+        intro: "登入後從題庫選題作答，Run 測公開測資，Submit 送出評分，再到進度、排行榜查看成績。",
+        cards: [
+          ["1. 選題與作答", "題庫只會顯示老師開放的題目。點進題目後可直接編輯程式碼，並拖曳分隔線調整版面。pandas 題已預先載入 pd／np，直接使用即可，不用自己 import。"],
+          ["2. Run 與 Submit", "Run 只測公開測資、方便除錯；Submit 會同時測公開與隱藏測資並記錄成績。競賽題只有在開放時間內才能提交。"],
+          ["3. 成績與密碼", "在「進度」看每題最佳分數，在「排行榜」看競賽名次（只計競賽題）。忘記密碼請找老師重設；登入後可用右上角「修改密碼」改成自己的。"]
+        ]
+      },
+      teacher: {
+        intro: "老師可以出題、管理競賽、查看學生情況，並管理教師帳號與重設密碼。",
+        cards: [
+          ["1. 出題與競賽", "在「教師後台」建立中英文題目、測資與 starter function（預設建立後立即開放）；可將題目設為競賽題並設定開放／關閉時間。"],
+          ["2. 學生情況", "在「學生情況」查看全部學生的解題數、總分、進度與作答紀錄；競賽名次請見「排行榜」。"],
+          ["3. 帳號與密碼", "管理員可在「教師後台 → 帳號管理」新增教師帳號。學生忘記密碼時，在「學生情況」該生列按「重設密碼」，把臨時密碼交給學生；學生登入後可自行「修改密碼」。"]
+        ]
+      }
     },
     contest: {
       title: "本週競賽",
@@ -529,12 +541,24 @@ const COPY = {
     },
     guide: {
       title: "Guide",
-      intro: "Students choose a problem, edit a Python function directly, Run public cases, and Submit public plus hidden cases.",
-      cards: [
-        ["1. Choose", "The list only shows problems opened by the teacher. Closed problems are hidden from students and cannot be opened directly."],
-        ["2. Solve", "Inside a problem, edit code directly and drag the splitters to resize Description, Code, and Testcase panels."],
-        ["3. Upload", "Teachers can create bilingual problems, test cases, and starter functions in Teacher. New problems are open by default."]
-      ]
+      studentTab: "Student",
+      teacherTab: "Teacher",
+      student: {
+        intro: "Log in, pick a problem, Run against public cases, Submit to be graded, then check Progress and the Leaderboard.",
+        cards: [
+          ["1. Choose & solve", "The list only shows problems the teacher has opened. Open a problem to edit code directly and drag the splitters to resize panels. For pandas problems, pd and np are preloaded — no import needed."],
+          ["2. Run & Submit", "Run tests only the public cases (for debugging); Submit runs public plus hidden cases and records your score. Contest problems accept submissions only during their open window."],
+          ["3. Scores & password", "See your best score per problem in Progress and your contest rank on the Leaderboard (contest problems only). If you forget your password, ask a teacher to reset it; once logged in you can change it via 'Password' at the top right."]
+        ]
+      },
+      teacher: {
+        intro: "Teachers can author problems, run contests, view students, and manage teacher accounts and password resets.",
+        cards: [
+          ["1. Author & contests", "In Teacher, create bilingual problems, test cases, and starter functions (open by default). You can mark a problem as a contest and set open/close times."],
+          ["2. Students", "In Students, view every student's solved count, total score, progress, and submission history; contest ranking is on the Leaderboard."],
+          ["3. Accounts & passwords", "Admins can add teacher accounts in Teacher → Accounts. When a student forgets their password, click 'Reset password' on their row in Students and hand them the temporary password; they can then change it via 'Password'."]
+        ]
+      }
     },
     contest: {
       title: "This Week's Contest",
@@ -1181,7 +1205,7 @@ function App() {
           />
         )}
 
-        {view === "tutorial" && <TutorialView copy={copy} />}
+        {view === "tutorial" && <TutorialView user={user} copy={copy} />}
         {view === "leaderboard" && <LeaderboardView leaderboard={leaderboard} explanation={leaderboardExplanation} language={language} copy={copy} />}
         {view === "contest" && <ContestView problems={problems} language={language} copy={copy} onOpenProblem={openProblem} />}
         {view === "progress" && <ProgressView user={user} progress={progress} language={language} copy={copy} />}
@@ -2063,17 +2087,28 @@ function DebugTextValue({ label, value }: { label: string; value: string }) {
   );
 }
 
-function TutorialView({ copy }: { copy: Copy }) {
+function TutorialView({ user, copy }: { user: User | null; copy: Copy }) {
+  const isStaff = user?.role === "admin" || user?.role === "teacher";
+  const [mode, setMode] = useState<"student" | "teacher">(isStaff ? "teacher" : "student");
+  const section = mode === "teacher" ? copy.guide.teacher : copy.guide.student;
   return (
     <section className="page-stack">
       <div className="page-heading">
         <div>
           <h1>{copy.guide.title}</h1>
-          <p>{copy.guide.intro}</p>
+          <p>{section.intro}</p>
+        </div>
+        <div className="segmented">
+          <button className={mode === "student" ? "active" : ""} onClick={() => setMode("student")}>
+            {copy.guide.studentTab}
+          </button>
+          <button className={mode === "teacher" ? "active" : ""} onClick={() => setMode("teacher")}>
+            {copy.guide.teacherTab}
+          </button>
         </div>
       </div>
       <section className="tutorial-grid">
-        {copy.guide.cards.map(([title, body]) => (
+        {section.cards.map(([title, body]) => (
           <article className="tutorial-card" key={title}>
             <h2>{title}</h2>
             <p>{body}</p>
