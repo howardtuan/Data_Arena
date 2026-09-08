@@ -27,13 +27,24 @@ app.post("/api/auth/register", (req, res) => {
   const errors = validateStudentRegistration({ name, email, studentId, password });
   if (errors.length) return res.status(400).json({ error: errors.join("；") });
 
-  // 班級代碼為選填；有填但查無此代碼則擋下，空白則歸未分班。
+  // 分班規則：有填有效代碼 → 依代碼；否則若註冊當下落在某班的收件時間窗 → 自動分入該班；都沒有 → 未分班。
   let classId = null;
   const trimmedCode = String(classCode || "").trim();
   if (trimmedCode) {
     const found = db.prepare("SELECT id FROM classes WHERE code = ?").get(trimmedCode);
     if (!found) return res.status(400).json({ error: "班級代碼不存在，請向老師確認或留空。" });
     classId = found.id;
+  } else {
+    const nowIso = new Date().toISOString();
+    const active = db
+      .prepare(
+        `SELECT id FROM classes
+         WHERE enroll_opens_at IS NOT NULL AND enroll_closes_at IS NOT NULL
+           AND enroll_opens_at <= ? AND enroll_closes_at >= ?
+         ORDER BY enroll_opens_at DESC LIMIT 1`
+      )
+      .get(nowIso, nowIso);
+    if (active) classId = active.id;
   }
 
   try {
@@ -743,7 +754,7 @@ app.get("/api/staff/students/:id", requireStaff, (req, res) => {
 app.get("/api/staff/classes", requireStaff, (_req, res) => {
   const classes = db
     .prepare(
-      `SELECT c.id, c.code, c.name, c.created_at,
+      `SELECT c.id, c.code, c.name, c.enroll_opens_at, c.enroll_closes_at, c.created_at,
               (SELECT COUNT(*) FROM users u WHERE u.class_id = c.id AND u.role = 'student') AS student_count
        FROM classes c
        ORDER BY c.name, c.id`
@@ -766,9 +777,18 @@ app.post("/api/staff/classes", requireStaff, (req, res) => {
   } else {
     code = generateClassCode();
   }
+  const win = parseEnrollWindow(req.body?.opensAt, req.body?.closesAt);
+  if (win.error) return res.status(400).json({ error: win.error });
+  if (enrollWindowOverlaps(win.opensAt, win.closesAt)) {
+    return res.status(409).json({ error: "收件時間與其他班級重疊，請調整時間。" });
+  }
   try {
-    const result = db.prepare("INSERT INTO classes (code, name) VALUES (?, ?)").run(code, name);
-    res.status(201).json({ class: db.prepare("SELECT id, code, name, created_at FROM classes WHERE id = ?").get(result.lastInsertRowid) });
+    const result = db
+      .prepare("INSERT INTO classes (code, name, enroll_opens_at, enroll_closes_at) VALUES (?, ?, ?, ?)")
+      .run(code, name, win.opensAt, win.closesAt);
+    res.status(201).json({
+      class: db.prepare("SELECT id, code, name, enroll_opens_at, enroll_closes_at, created_at FROM classes WHERE id = ?").get(result.lastInsertRowid)
+    });
   } catch (error) {
     if (String(error.message).includes("UNIQUE")) {
       return res.status(409).json({ error: "此班級代碼已存在，請換一個。" });
@@ -797,11 +817,20 @@ app.patch("/api/staff/classes/:id", requireStaff, (req, res) => {
     updates.push("code = ?");
     values.push(code);
   }
+  if ("opensAt" in (req.body || {}) || "closesAt" in (req.body || {})) {
+    const win = parseEnrollWindow(req.body.opensAt, req.body.closesAt);
+    if (win.error) return res.status(400).json({ error: win.error });
+    if (enrollWindowOverlaps(win.opensAt, win.closesAt, id)) {
+      return res.status(409).json({ error: "收件時間與其他班級重疊，請調整時間。" });
+    }
+    updates.push("enroll_opens_at = ?", "enroll_closes_at = ?");
+    values.push(win.opensAt, win.closesAt);
+  }
   if (!updates.length) return res.json({ class: existing });
   try {
     values.push(id);
     db.prepare(`UPDATE classes SET ${updates.join(", ")} WHERE id = ?`).run(...values);
-    res.json({ class: db.prepare("SELECT id, code, name, created_at FROM classes WHERE id = ?").get(id) });
+    res.json({ class: db.prepare("SELECT id, code, name, enroll_opens_at, enroll_closes_at, created_at FROM classes WHERE id = ?").get(id) });
   } catch (error) {
     if (String(error.message).includes("UNIQUE")) {
       return res.status(409).json({ error: "此班級代碼已存在，請換一個。" });
@@ -903,6 +932,39 @@ function generateClassCode() {
     if (!db.prepare("SELECT id FROM classes WHERE code = ?").get(code)) return code;
   }
   return `C${Date.now().toString(36).toUpperCase()}`;
+}
+
+// 解析班級收件時間窗：開始與結束需同時設定（或都留空）。
+function parseEnrollWindow(rawOpens, rawCloses) {
+  const opensAt = normalizeIsoOrNull(rawOpens);
+  const closesAt = normalizeIsoOrNull(rawCloses);
+  if ((rawOpens && opensAt === null) || (rawCloses && closesAt === null)) {
+    return { error: "收件時間格式不正確" };
+  }
+  if ((opensAt && !closesAt) || (!opensAt && closesAt)) {
+    return { error: "收件時間需同時設定開始與結束（或都留空）" };
+  }
+  if (opensAt && closesAt && Date.parse(opensAt) >= Date.parse(closesAt)) {
+    return { error: "收件開始時間必須早於結束時間" };
+  }
+  return { opensAt, closesAt };
+}
+
+// 檢查收件時間是否與其他班級重疊（同一時間只允許一個班在收件）。
+function enrollWindowOverlaps(opensAt, closesAt, excludeId = 0) {
+  if (!opensAt || !closesAt) return false;
+  const rows = db
+    .prepare(
+      "SELECT enroll_opens_at, enroll_closes_at FROM classes WHERE id != ? AND enroll_opens_at IS NOT NULL AND enroll_closes_at IS NOT NULL"
+    )
+    .all(excludeId);
+  const a1 = Date.parse(opensAt);
+  const a2 = Date.parse(closesAt);
+  return rows.some((row) => {
+    const b1 = Date.parse(row.enroll_opens_at);
+    const b2 = Date.parse(row.enroll_closes_at);
+    return a1 < b2 && b1 < a2;
+  });
 }
 
 function signToken(user) {

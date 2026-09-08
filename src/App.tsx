@@ -2647,7 +2647,15 @@ type StaffStudent = {
   best_score_sum: number;
   last_activity: string | null;
 };
-type ClassRow = { id: number; code: string; name: string; created_at: string; student_count: number };
+type ClassRow = {
+  id: number;
+  code: string;
+  name: string;
+  enroll_opens_at: string | null;
+  enroll_closes_at: string | null;
+  created_at: string;
+  student_count: number;
+};
 type StaffProgressRow = {
   id: number;
   slug: string;
@@ -2691,6 +2699,36 @@ function formatStaffDate(value: string | null, language: Language) {
   });
 }
 
+function ClassTimeEditor({
+  classRow,
+  zh,
+  onSave
+}: {
+  classRow: ClassRow;
+  zh: boolean;
+  onSave: (id: number, opensIso: string | null, closesIso: string | null) => void;
+}) {
+  const [opens, setOpens] = useState(isoToTaipeiInput(classRow.enroll_opens_at));
+  const [closes, setCloses] = useState(isoToTaipeiInput(classRow.enroll_closes_at));
+  const changed =
+    opens !== isoToTaipeiInput(classRow.enroll_opens_at) || closes !== isoToTaipeiInput(classRow.enroll_closes_at);
+  return (
+    <div className="class-time-editor">
+      <input type="datetime-local" value={opens} onChange={(event) => setOpens(event.target.value)} />
+      <span>~</span>
+      <input type="datetime-local" value={closes} onChange={(event) => setCloses(event.target.value)} />
+      {changed && (
+        <button
+          className="ghost-button compact"
+          onClick={() => onSave(classRow.id, taipeiInputToIso(opens), taipeiInputToIso(closes))}
+        >
+          {zh ? "儲存" : "Save"}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function StudentsView({
   user,
   token,
@@ -2713,6 +2751,8 @@ function StudentsView({
   const [classFilter, setClassFilter] = useState<string>("all");
   const [newClassName, setNewClassName] = useState("");
   const [newClassCode, setNewClassCode] = useState("");
+  const [newClassOpens, setNewClassOpens] = useState("");
+  const [newClassCloses, setNewClassCloses] = useState("");
   const [selected, setSelected] = useState<StaffStudentDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [resetInfo, setResetInfo] = useState<{ name: string; password: string } | null>(null);
@@ -2759,14 +2799,38 @@ function StudentsView({
     try {
       await api(
         "/api/staff/classes",
-        { method: "POST", body: JSON.stringify({ name: newClassName.trim(), code: newClassCode.trim() }) },
+        {
+          method: "POST",
+          body: JSON.stringify({
+            name: newClassName.trim(),
+            code: newClassCode.trim(),
+            opensAt: taipeiInputToIso(newClassOpens),
+            closesAt: taipeiInputToIso(newClassCloses)
+          })
+        },
         token
       );
       setNewClassName("");
       setNewClassCode("");
+      setNewClassOpens("");
+      setNewClassCloses("");
       await loadClasses();
     } catch (e) {
       setError(readError(e, zh ? "建立班級失敗" : "Failed to create class"));
+    }
+  }
+
+  async function saveClassTime(id: number, opensIso: string | null, closesIso: string | null) {
+    setError("");
+    try {
+      await api(
+        `/api/staff/classes/${id}`,
+        { method: "PATCH", body: JSON.stringify({ opensAt: opensIso || "", closesAt: closesIso || "" }) },
+        token
+      );
+      await loadClasses();
+    } catch (e) {
+      setError(readError(e, zh ? "設定收件時間失敗" : "Failed to set enrollment time"));
     }
   }
 
@@ -2892,6 +2956,11 @@ function StudentsView({
           <h2>{zh ? `班級管理（${classes.length}）` : `Classes (${classes.length})`}</h2>
           <span className="muted">{zh ? `未分班學生：${unassigned}` : `Unassigned: ${unassigned}`}</span>
         </div>
+        <p className="muted">
+          {zh
+            ? "設定「收件時間」後，學生在該時段內註冊會自動分到這個班（不需輸入代碼）；同一時間只允許一個班收件。學生也仍可用代碼加入。"
+            : "Set an enrollment window and students who register during it are auto-assigned to this class (no code needed); only one class may collect at a time. Codes still work too."}
+        </p>
         <form className="class-create-row" onSubmit={createClass}>
           <input
             value={newClassName}
@@ -2903,6 +2972,14 @@ function StudentsView({
             onChange={(event) => setNewClassCode(event.target.value)}
             placeholder={zh ? "代碼（選填，留空自動產生）" : "Code (optional)"}
           />
+          <label className="class-time-field">
+            {zh ? "收件開始" : "Opens"}
+            <input type="datetime-local" value={newClassOpens} onChange={(event) => setNewClassOpens(event.target.value)} />
+          </label>
+          <label className="class-time-field">
+            {zh ? "收件結束" : "Closes"}
+            <input type="datetime-local" value={newClassCloses} onChange={(event) => setNewClassCloses(event.target.value)} />
+          </label>
           <button className="primary-button" disabled={!newClassName.trim()}>
             {zh ? "建立班級" : "Create class"}
           </button>
@@ -2915,21 +2992,36 @@ function StudentsView({
                   <th>{zh ? "班級名稱" : "Class name"}</th>
                   <th>{zh ? "加入代碼" : "Join code"}</th>
                   <th>{zh ? "人數" : "Students"}</th>
+                  <th>{zh ? "收件時間" : "Enrollment window"}</th>
                   <th>{zh ? "動作" : "Actions"}</th>
                 </tr>
               </thead>
               <tbody>
-                {classes.map((c) => (
-                  <tr key={c.id}>
-                    <td>{c.name}</td>
-                    <td><code className="temp-password">{c.code}</code></td>
-                    <td>{c.student_count}</td>
-                    <td className="staff-actions">
-                      <button className="ghost-button compact" onClick={() => renameClass(c)}>{zh ? "改名" : "Rename"}</button>
-                      <button className="ghost-button compact" onClick={() => deleteClass(c)}>{zh ? "刪除" : "Delete"}</button>
-                    </td>
-                  </tr>
-                ))}
+                {classes.map((c) => {
+                  const now = Date.now();
+                  const active =
+                    !!c.enroll_opens_at &&
+                    !!c.enroll_closes_at &&
+                    Date.parse(c.enroll_opens_at) <= now &&
+                    now <= Date.parse(c.enroll_closes_at);
+                  return (
+                    <tr key={c.id}>
+                      <td>
+                        {c.name}
+                        {active && <span className="enroll-badge">{zh ? "收件中" : "Open"}</span>}
+                      </td>
+                      <td><code className="temp-password">{c.code}</code></td>
+                      <td>{c.student_count}</td>
+                      <td>
+                        <ClassTimeEditor classRow={c} zh={zh} onSave={saveClassTime} />
+                      </td>
+                      <td className="staff-actions">
+                        <button className="ghost-button compact" onClick={() => renameClass(c)}>{zh ? "改名" : "Rename"}</button>
+                        <button className="ghost-button compact" onClick={() => deleteClass(c)}>{zh ? "刪除" : "Delete"}</button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
