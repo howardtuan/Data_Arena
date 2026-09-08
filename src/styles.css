@@ -2047,3 +2047,47 @@ input:disabled {
   font-size: 0.85rem;
   max-width: 160px;
 }
+
+/* ── 班級收件時間 ───────────────────────────────────────── */
+.class-time-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+.class-time-field input {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  padding: 6px 10px;
+  font-size: 0.85rem;
+  color-scheme: dark;
+}
+.class-time-editor {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.class-time-editor input {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 4px 8px;
+  font-size: 0.8rem;
+  color-scheme: dark;
+}
+.enroll-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--green-soft);
+  color: var(--green);
+  border: 1px solid var(--green);
+  font-size: 0.72rem;
+  vertical-align: middle;
+}

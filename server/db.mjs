@@ -42,6 +42,8 @@ function migrate(database) {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       code TEXT NOT NULL UNIQUE,
       name TEXT NOT NULL,
+      enroll_opens_at TEXT,
+      enroll_closes_at TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -162,6 +164,8 @@ function migrate(database) {
   migrateUserRoles(database);
   // class_id 於 migrateUserRoles（可能重建 users 表）之後再加，避免被重建流程移除。
   ensureColumn(database, "users", "class_id", "class_id INTEGER REFERENCES classes(id) ON DELETE SET NULL");
+  ensureColumn(database, "classes", "enroll_opens_at", "enroll_opens_at TEXT");
+  ensureColumn(database, "classes", "enroll_closes_at", "enroll_closes_at TEXT");
 }
 
 // 既有資料庫的 users.role CHECK 只允許 (student, admin)。SQLite 無法直接改 CHECK，
