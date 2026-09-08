@@ -1991,3 +1991,27 @@ input:disabled {
   letter-spacing: 0.5px;
   user-select: all;
 }
+
+/* ── 修改密碼視窗 ───────────────────────────────────────── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 1000;
+}
+.modal-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: var(--shadow);
+  padding: 20px 22px;
+  width: 100%;
+  max-width: 420px;
+}
+.modal-card .form-grid {
+  margin-top: 12px;
+}

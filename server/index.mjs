@@ -67,6 +67,22 @@ app.get("/api/auth/me", requireAuth, (req, res) => {
   res.json({ user: publicUser(req.user) });
 });
 
+// 使用者自行修改密碼（學生、教師、管理員皆可）
+app.post("/api/auth/change-password", requireAuth, (req, res) => {
+  const { currentPassword, newPassword } = req.body || {};
+  if (!currentPassword || !bcrypt.compareSync(String(currentPassword), req.user.password_hash)) {
+    return res.status(400).json({ error: "目前密碼不正確" });
+  }
+  if (String(newPassword || "").length < 8) {
+    return res.status(400).json({ error: "新密碼至少 8 碼" });
+  }
+  db.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(
+    bcrypt.hashSync(String(newPassword), 12),
+    req.user.id
+  );
+  res.json({ ok: true });
+});
+
 app.get("/api/problems", optionalAuth, (req, res) => {
   const week = req.query.week ? Number(req.query.week) : undefined;
   const showClosed = req.user?.role === "admin";
