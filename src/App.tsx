@@ -744,6 +744,7 @@ function App() {
   const [workspaceSplit, setWorkspaceSplit] = useState(43);
   const [testSplit, setTestSplit] = useState(64);
   const [submissionRefreshKey, setSubmissionRefreshKey] = useState(0);
+  const [changePwOpen, setChangePwOpen] = useState(false);
 
   const canEdit = Boolean(selectedProblem && (selectedProblem.isOpen || user?.role === "admin"));
   const canSubmit = canEdit;
@@ -1103,8 +1104,17 @@ function App() {
         onView={goView}
         onAuth={openAuth}
         onLogout={logout}
+        onChangePassword={() => setChangePwOpen(true)}
         onLanguageChange={() => setLanguage((current) => (current === "zh" ? "en" : "zh"))}
       />
+
+      {changePwOpen && (
+        <ChangePasswordModal
+          token={token}
+          language={language}
+          onClose={() => setChangePwOpen(false)}
+        />
+      )}
 
       {status && <div className="notice" role="status">{status}</div>}
 
@@ -1211,6 +1221,7 @@ function Topbar({
   onView,
   onAuth,
   onLogout,
+  onChangePassword,
   onLanguageChange
 }: {
   view: View;
@@ -1220,6 +1231,7 @@ function Topbar({
   onView: (view: View) => void;
   onAuth: (mode: AuthMode) => void;
   onLogout: () => void;
+  onChangePassword: () => void;
   onLanguageChange: () => void;
 }) {
   return (
@@ -1267,6 +1279,7 @@ function Topbar({
         {user ? (
           <div className="account-area">
             <span className="user-chip">{user.name}</span>
+            <button className="ghost-button compact" onClick={onChangePassword}>{language === "zh" ? "修改密碼" : "Password"}</button>
             <button className="ghost-button compact" onClick={onLogout}>{copy.auth.logout}</button>
           </div>
         ) : (
@@ -2973,6 +2986,103 @@ function AccountsPanel({ token, language }: { token: string; language: Language 
         )}
       </aside>
     </section>
+  );
+}
+
+function ChangePasswordModal({
+  token,
+  language,
+  onClose
+}: {
+  token: string;
+  language: Language;
+  onClose: () => void;
+}) {
+  const zh = language === "zh";
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    setError("");
+    setMessage("");
+    if (newPassword.length < 8) {
+      setError(zh ? "新密碼至少 8 碼" : "New password needs at least 8 characters");
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setError(zh ? "兩次輸入的新密碼不一致" : "New passwords do not match");
+      return;
+    }
+    setLoading(true);
+    try {
+      await api(
+        "/api/auth/change-password",
+        { method: "POST", body: JSON.stringify({ currentPassword, newPassword }) },
+        token
+      );
+      setMessage(zh ? "密碼已更新，下次請用新密碼登入。" : "Password updated. Use the new password next time.");
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+    } catch (e) {
+      setError(readError(e, zh ? "修改密碼失敗" : "Failed to change password"));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-card" onClick={(event) => event.stopPropagation()}>
+        <div className="panel-title-row">
+          <h2>{zh ? "修改密碼" : "Change password"}</h2>
+          <button className="ghost-button compact" type="button" onClick={onClose}>
+            {zh ? "關閉" : "Close"}
+          </button>
+        </div>
+        <form onSubmit={submit} className="form-grid">
+          <label className="wide">
+            {zh ? "目前密碼" : "Current password"}
+            <input
+              type="password"
+              value={currentPassword}
+              onChange={(event) => setCurrentPassword(event.target.value)}
+              autoComplete="current-password"
+            />
+          </label>
+          <label className="wide">
+            {zh ? "新密碼（至少 8 碼）" : "New password (min 8)"}
+            <input
+              type="password"
+              value={newPassword}
+              onChange={(event) => setNewPassword(event.target.value)}
+              autoComplete="new-password"
+            />
+          </label>
+          <label className="wide">
+            {zh ? "再次輸入新密碼" : "Confirm new password"}
+            <input
+              type="password"
+              value={confirmPassword}
+              onChange={(event) => setConfirmPassword(event.target.value)}
+              autoComplete="new-password"
+            />
+          </label>
+          {error && <p className="form-error">{error}</p>}
+          {message && <p className="form-success">{message}</p>}
+          <div className="form-actions wide">
+            <button className="primary-button" disabled={loading}>
+              {zh ? "更新密碼" : "Update password"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
   );
 }
 
