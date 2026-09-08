@@ -2015,3 +2015,35 @@ input:disabled {
 .modal-card .form-grid {
   margin-top: 12px;
 }
+
+/* ── 班級管理 UI ────────────────────────────────────────── */
+.staff-filters {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.class-create-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+.class-create-row input {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  padding: 8px 12px;
+  font-size: 0.9rem;
+  flex: 1 1 200px;
+}
+.class-select {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  padding: 5px 8px;
+  font-size: 0.85rem;
+  max-width: 160px;
+}
