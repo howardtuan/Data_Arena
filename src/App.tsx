@@ -2088,23 +2088,15 @@ function DebugTextValue({ label, value }: { label: string; value: string }) {
 }
 
 function TutorialView({ user, copy }: { user: User | null; copy: Copy }) {
+  // 依登入角色顯示對應版本：教師／管理員看教師版，學生（或未登入）看學生版。
   const isStaff = user?.role === "admin" || user?.role === "teacher";
-  const [mode, setMode] = useState<"student" | "teacher">(isStaff ? "teacher" : "student");
-  const section = mode === "teacher" ? copy.guide.teacher : copy.guide.student;
+  const section = isStaff ? copy.guide.teacher : copy.guide.student;
   return (
     <section className="page-stack">
       <div className="page-heading">
         <div>
-          <h1>{copy.guide.title}</h1>
+          <h1>{copy.guide.title} · {isStaff ? copy.guide.teacherTab : copy.guide.studentTab}</h1>
           <p>{section.intro}</p>
-        </div>
-        <div className="segmented">
-          <button className={mode === "student" ? "active" : ""} onClick={() => setMode("student")}>
-            {copy.guide.studentTab}
-          </button>
-          <button className={mode === "teacher" ? "active" : ""} onClick={() => setMode("teacher")}>
-            {copy.guide.teacherTab}
-          </button>
         </div>
       </div>
       <section className="tutorial-grid">
