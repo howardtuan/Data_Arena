@@ -1893,3 +1893,101 @@ input:disabled {
   background: #f3e8ff;
   color: #7c3aed;
 }
+
+/* ── 學生情況 / 帳號管理（教師功能）─────────────────────── */
+.muted {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+.form-error {
+  color: var(--red);
+  font-size: 0.9rem;
+  margin: 8px 0 0;
+}
+.form-success {
+  color: var(--green);
+  font-size: 0.9rem;
+  margin: 8px 0 0;
+}
+.staff-search {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  padding: 7px 12px;
+  font-size: 0.9rem;
+  min-width: 240px;
+}
+.staff-table-wrap {
+  overflow-x: auto;
+  width: 100%;
+}
+.staff-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+.staff-table th,
+.staff-table td {
+  text-align: left;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line-soft);
+  white-space: nowrap;
+}
+.staff-table th {
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 0.82rem;
+}
+.staff-table tbody tr:hover {
+  background: var(--panel-2);
+}
+.staff-email {
+  color: var(--muted);
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.staff-actions {
+  display: flex;
+  gap: 8px;
+  white-space: nowrap;
+}
+.student-detail {
+  margin-top: 18px;
+}
+.student-detail-sub {
+  margin: 18px 0 8px;
+  font-size: 1rem;
+  color: var(--text);
+}
+.reset-banner {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  background: var(--green-soft);
+  border: 1px solid var(--green);
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin-bottom: 16px;
+}
+.reset-banner > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.reset-banner small {
+  color: var(--muted);
+}
+.temp-password {
+  background: var(--code);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 1rem;
+  color: var(--brand);
+  letter-spacing: 0.5px;
+  user-select: all;
+}

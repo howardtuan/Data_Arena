@@ -44,7 +44,7 @@ function migrate(database) {
       email TEXT NOT NULL UNIQUE,
       student_id TEXT UNIQUE,
       password_hash TEXT NOT NULL,
-      role TEXT NOT NULL CHECK (role IN ('student', 'admin')),
+      role TEXT NOT NULL CHECK (role IN ('student', 'teacher', 'admin')),
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -151,6 +151,41 @@ function migrate(database) {
   ensureColumn(database, "problems", "closes_at", "closes_at TEXT");
   ensureColumn(database, "submissions", "peak_memory", "peak_memory INTEGER NOT NULL DEFAULT 0");
   ensureColumn(database, "problems", "kind", "kind TEXT NOT NULL DEFAULT 'python'");
+  migrateUserRoles(database);
+}
+
+// 既有資料庫的 users.role CHECK 只允許 (student, admin)。SQLite 無法直接改 CHECK，
+// 需重建資料表。此遷移為非破壞式：完整保留所有使用者、提交與關聯資料，只放寬 role 允許 teacher。
+function migrateUserRoles(database) {
+  const tableSql =
+    database
+      .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'users'")
+      .get()?.sql || "";
+  if (tableSql.includes("'teacher'")) return; // 已經遷移過
+
+  database.pragma("foreign_keys = OFF");
+  try {
+    const rebuild = database.transaction(() => {
+      database.exec(`
+        CREATE TABLE users_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL,
+          email TEXT NOT NULL UNIQUE,
+          student_id TEXT UNIQUE,
+          password_hash TEXT NOT NULL,
+          role TEXT NOT NULL CHECK (role IN ('student', 'teacher', 'admin')),
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        INSERT INTO users_new (id, name, email, student_id, password_hash, role, created_at)
+          SELECT id, name, email, student_id, password_hash, role, created_at FROM users;
+        DROP TABLE users;
+        ALTER TABLE users_new RENAME TO users;
+      `);
+    });
+    rebuild();
+  } finally {
+    database.pragma("foreign_keys = ON");
+  }
 }
 
 function ensureColumn(database, table, column, definition) {

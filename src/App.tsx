@@ -6,7 +6,7 @@ import type {
   UIEvent
 } from "react";
 
-type View = "problems" | "workspace" | "auth" | "tutorial" | "leaderboard" | "progress" | "teacher" | "contest";
+type View = "problems" | "workspace" | "auth" | "tutorial" | "leaderboard" | "progress" | "teacher" | "students" | "contest";
 type AuthMode = "login" | "register";
 type DifficultyFilter = "all" | "1" | "2" | "3";
 type KindFilter = "all" | "python" | "pandas";
@@ -18,7 +18,7 @@ type User = {
   name: string;
   email: string;
   studentId: string | null;
-  role: "student" | "admin";
+  role: "student" | "teacher" | "admin";
 };
 
 type PublicTest = {
@@ -207,6 +207,7 @@ const COPY = {
       progress: "進度",
       guide: "指南",
       teacher: "教師後台",
+      students: "學生情況",
       menu: "主選單"
     },
     auth: {
@@ -243,6 +244,7 @@ const COPY = {
       loggedOut: "已登出",
       loginForProgress: "請先登入後查看 Progress。",
       teacherOnly: "只有老師帳號可以進入 Teacher。",
+      studentsOnly: "只有教師或管理員可以進入學生情況。",
       loginRequired: "請先登入後 Run 或 Submit。",
       startBeforeRun: "此題目前不可作答。",
       runPassed: "Run 通過公開測資。",
@@ -426,6 +428,7 @@ const COPY = {
       progress: "Progress",
       guide: "Guide",
       teacher: "Teacher",
+      students: "Students",
       menu: "Main menu"
     },
     auth: {
@@ -462,6 +465,7 @@ const COPY = {
       loggedOut: "Signed out",
       loginForProgress: "Please log in to view Progress.",
       teacherOnly: "Only teacher accounts can enter Teacher.",
+      studentsOnly: "Only teachers or admins can view Students.",
       loginRequired: "Please log in before Run or Submit.",
       startBeforeRun: "This problem is not available for solving.",
       runPassed: "Run passed the public cases.",
@@ -863,7 +867,13 @@ function App() {
       const problemResponse = await api<{ problems: Problem[] }>("/api/problems", {}, response.token);
       setProblems(problemResponse.problems);
       setSelectedSlug((current) => current || problemResponse.problems[0]?.slug || "");
-      setView(response.user.role === "admin" ? "teacher" : "problems");
+      setView(
+        response.user.role === "admin"
+          ? "teacher"
+          : response.user.role === "teacher"
+          ? "students"
+          : "problems"
+      );
     } catch (error) {
       setStatus(readError(error, copy.common.unknownError));
     } finally {
@@ -913,6 +923,10 @@ function App() {
     }
     if (nextView === "teacher" && user?.role !== "admin") {
       setStatus(copy.status.teacherOnly);
+      return;
+    }
+    if (nextView === "students" && user?.role !== "admin" && user?.role !== "teacher") {
+      setStatus(copy.status.studentsOnly);
       return;
     }
     setStatus("");
@@ -1170,6 +1184,7 @@ function App() {
             loading={loading}
             language={language}
             copy={copy}
+            token={token}
             onToggleProblem={toggleProblemOpen}
             onSaveContest={saveContestSettings}
             onEditProblem={startEditProblem}
@@ -1179,6 +1194,9 @@ function App() {
             onCreateProblem={createProblem}
             onResetTemplate={() => setUploadForm(DEFAULT_PROBLEM_FORM)}
           />
+        )}
+        {view === "students" && (
+          <StudentsView user={user} token={token} language={language} copy={copy} />
         )}
       </main>
     </div>
@@ -1228,6 +1246,11 @@ function Topbar({
           <button className={view === "tutorial" ? "nav-link active" : "nav-link"} onClick={() => onView("tutorial")}>
             {copy.nav.guide}
           </button>
+          {(user?.role === "admin" || user?.role === "teacher") && (
+            <button className={view === "students" ? "nav-link active" : "nav-link"} onClick={() => onView("students")}>
+              {copy.nav.students}
+            </button>
+          )}
           {user?.role === "admin" && (
             <button className={view === "teacher" ? "nav-link active" : "nav-link"} onClick={() => onView("teacher")}>
               {copy.nav.teacher}
@@ -2319,6 +2342,7 @@ function TeacherView({
   loading,
   language,
   copy,
+  token,
   onToggleProblem,
   onSaveContest,
   onEditProblem,
@@ -2335,6 +2359,7 @@ function TeacherView({
   loading: boolean;
   language: Language;
   copy: Copy;
+  token: string;
   onToggleProblem: (problem: Problem) => void;
   onSaveContest: (problem: Problem, patch: { isContest: boolean; opensAt: string | null; closesAt: string | null }) => void;
   onEditProblem: (problem: Problem) => void;
@@ -2344,7 +2369,7 @@ function TeacherView({
   onCreateProblem: (event: FormEvent) => void;
   onResetTemplate: () => void;
 }) {
-  const [tab, setTab] = useState<"manage" | "upload">("manage");
+  const [tab, setTab] = useState<"manage" | "upload" | "accounts">("manage");
   const startEdit = (problem: Problem) => {
     onEditProblem(problem);
     setTab("upload");
@@ -2361,6 +2386,7 @@ function TeacherView({
         <div className="segmented">
           <button className={tab === "manage" ? "active" : ""} onClick={() => setTab("manage")}>{copy.teacher.manage}</button>
           <button className={tab === "upload" ? "active" : ""} onClick={() => setTab("upload")}>{copy.teacher.upload}</button>
+          <button className={tab === "accounts" ? "active" : ""} onClick={() => setTab("accounts")}>{language === "zh" ? "帳號管理" : "Accounts"}</button>
         </div>
       </div>
 
@@ -2370,7 +2396,7 @@ function TeacherView({
         <MetricCard label={copy.teacher.metrics.submissions} value={String(dashboard?.counts.submissions ?? 0)} hint={copy.teacher.metrics.submissionsHint(dashboard?.counts.passedSubmissions ?? 0)} />
       </div>
 
-      {tab === "manage" ? (
+      {tab === "manage" && (
         <section className="panel">
           <div className="panel-title-row">
             <h2>{copy.teacher.manageTitle}</h2>
@@ -2391,12 +2417,14 @@ function TeacherView({
             ))}
           </div>
         </section>
-      ) : (
+      )}
+      {tab === "upload" && (
         <section className="teacher-upload-grid">
           <ProblemUploadForm form={form} loading={loading} copy={copy} editing={editing} onFormChange={onFormChange} onSubmit={onCreateProblem} onResetTemplate={onResetTemplate} onCancelEdit={onCancelEdit} />
           <UploadGuide copy={copy} />
         </section>
       )}
+      {tab === "accounts" && <AccountsPanel token={token} language={language} />}
     </section>
   );
 }
@@ -2500,6 +2528,451 @@ function MetricCard({ label, value, hint }: { label: string; value: string; hint
       <strong>{value}</strong>
       <small>{hint}</small>
     </article>
+  );
+}
+
+type StaffStudent = {
+  id: number;
+  name: string;
+  email: string;
+  student_id: string | null;
+  created_at: string;
+  submissions: number;
+  solved: number;
+  best_score_sum: number;
+  last_activity: string | null;
+};
+type StaffProgressRow = {
+  id: number;
+  slug: string;
+  title: string;
+  title_en: string;
+  week: number;
+  kind: string;
+  submissions: number;
+  best_score: number | null;
+  solved: number | null;
+  last_submission: string | null;
+};
+type StaffSubmissionRow = {
+  id: number;
+  score: number;
+  passed: number;
+  passed_tests: number;
+  total_tests: number;
+  runtime_ms: number;
+  created_at: string;
+  slug: string;
+  title: string;
+  title_en: string;
+  week: number;
+};
+type StaffStudentDetail = { student: User; progress: StaffProgressRow[]; submissions: StaffSubmissionRow[] };
+type TeacherRow = { id: number; name: string; email: string; created_at: string };
+
+function formatStaffDate(value: string | null, language: Language) {
+  if (!value) return "—";
+  const iso = value.includes("T") ? value : `${value.replace(" ", "T")}Z`;
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString(language === "zh" ? "zh-TW" : "en-US", {
+    timeZone: "Asia/Taipei",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
+
+function StudentsView({
+  user,
+  token,
+  language,
+  copy
+}: {
+  user: User | null;
+  token: string;
+  language: Language;
+  copy: Copy;
+}) {
+  const zh = language === "zh";
+  const [students, setStudents] = useState<StaffStudent[]>([]);
+  const [problemsTotal, setProblemsTotal] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [search, setSearch] = useState("");
+  const [selected, setSelected] = useState<StaffStudentDetail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [resetInfo, setResetInfo] = useState<{ name: string; password: string } | null>(null);
+
+  useEffect(() => {
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]);
+
+  async function load() {
+    setLoading(true);
+    setError("");
+    try {
+      const res = await api<{ students: StaffStudent[]; problemsTotal: number }>("/api/staff/students", {}, token);
+      setStudents(res.students);
+      setProblemsTotal(res.problemsTotal);
+    } catch (e) {
+      setError(readError(e, zh ? "載入學生資料失敗" : "Failed to load students"));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function openDetail(id: number) {
+    setDetailLoading(true);
+    setError("");
+    try {
+      const res = await api<StaffStudentDetail>(`/api/staff/students/${id}`, {}, token);
+      setSelected(res);
+    } catch (e) {
+      setError(readError(e, zh ? "載入學生詳情失敗" : "Failed to load student detail"));
+    } finally {
+      setDetailLoading(false);
+    }
+  }
+
+  async function resetPassword(studentRow: StaffStudent) {
+    const confirmMsg = zh
+      ? `確定要重設「${studentRow.name}」的密碼嗎？系統會產生一組臨時密碼。`
+      : `Reset password for "${studentRow.name}"? A temporary password will be generated.`;
+    if (!window.confirm(confirmMsg)) return;
+    setError("");
+    try {
+      const res = await api<{ tempPassword: string }>(
+        `/api/staff/users/${studentRow.id}/reset-password`,
+        { method: "POST" },
+        token
+      );
+      setResetInfo({ name: studentRow.name, password: res.tempPassword });
+    } catch (e) {
+      setError(readError(e, zh ? "重設密碼失敗" : "Failed to reset password"));
+    }
+  }
+
+  if (user?.role !== "admin" && user?.role !== "teacher") {
+    return <section className="panel">{copy.status.studentsOnly}</section>;
+  }
+
+  const keyword = search.trim().toLowerCase();
+  const filtered = keyword
+    ? students.filter((s) =>
+        [s.name, s.email, s.student_id || ""].some((field) => field.toLowerCase().includes(keyword))
+      )
+    : students;
+
+  return (
+    <section className="teacher-dashboard">
+      <div className="page-heading">
+        <div>
+          <h1>{zh ? "學生情況" : "Students"}</h1>
+          <p>
+            {zh
+              ? "查看全部學生的解題進度與作答紀錄；忘記密碼時可在此重設。競賽與排行榜表現請見「排行榜」頁。"
+              : "See every student's progress and submissions; reset a forgotten password here. Contest ranking is on the Leaderboard page."}
+          </p>
+        </div>
+      </div>
+
+      {resetInfo && (
+        <div className="reset-banner">
+          <div>
+            <strong>{zh ? "已重設密碼" : "Password reset"}</strong>
+            <span>
+              {zh ? `請把「${resetInfo.name}」的臨時密碼交給該學生：` : `Give this temporary password to ${resetInfo.name}: `}
+              <code className="temp-password">{resetInfo.password}</code>
+            </span>
+            <small>{zh ? "此密碼只會顯示這一次，關閉後無法再查看。建議學生登入後自行更改。" : "This password is shown only once."}</small>
+          </div>
+          <button className="ghost-button compact" onClick={() => setResetInfo(null)}>
+            {zh ? "關閉" : "Close"}
+          </button>
+        </div>
+      )}
+
+      {error && <p className="form-error">{error}</p>}
+
+      <div className="panel">
+        <div className="panel-title-row">
+          <h2>{zh ? `學生列表（${filtered.length}）` : `Students (${filtered.length})`}</h2>
+          <input
+            className="staff-search"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder={zh ? "搜尋姓名 / 學號 / Email" : "Search name / ID / email"}
+          />
+        </div>
+        {loading ? (
+          <p className="muted">{copy.common.loading}…</p>
+        ) : filtered.length === 0 ? (
+          <p className="muted">{copy.common.noData}</p>
+        ) : (
+          <div className="staff-table-wrap">
+            <table className="staff-table">
+              <thead>
+                <tr>
+                  <th>{zh ? "姓名" : "Name"}</th>
+                  <th>{zh ? "學號" : "Student ID"}</th>
+                  <th>Email</th>
+                  <th>{zh ? "解題" : "Solved"}</th>
+                  <th>{zh ? "提交數" : "Submissions"}</th>
+                  <th>{zh ? "總分" : "Total score"}</th>
+                  <th>{zh ? "最後活動" : "Last active"}</th>
+                  <th>{zh ? "動作" : "Actions"}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((s) => (
+                  <tr key={s.id}>
+                    <td>{s.name}</td>
+                    <td>{s.student_id || "—"}</td>
+                    <td className="staff-email">{s.email}</td>
+                    <td>{s.solved}/{problemsTotal}</td>
+                    <td>{s.submissions}</td>
+                    <td>{s.best_score_sum}</td>
+                    <td>{formatStaffDate(s.last_activity, language)}</td>
+                    <td className="staff-actions">
+                      <button className="ghost-button compact" onClick={() => openDetail(s.id)}>
+                        {zh ? "查看" : "View"}
+                      </button>
+                      <button className="ghost-button compact" onClick={() => resetPassword(s)}>
+                        {zh ? "重設密碼" : "Reset password"}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {detailLoading && <p className="muted">{copy.common.loading}…</p>}
+      {selected && (
+        <div className="panel student-detail">
+          <div className="panel-title-row">
+            <h2>
+              {selected.student.name}
+              {selected.student.studentId ? `（${selected.student.studentId}）` : ""}
+            </h2>
+            <button className="ghost-button compact" onClick={() => setSelected(null)}>
+              {zh ? "關閉" : "Close"}
+            </button>
+          </div>
+
+          <h3 className="student-detail-sub">{zh ? "各題進度" : "Progress by problem"}</h3>
+          <div className="staff-table-wrap">
+            <table className="staff-table">
+              <thead>
+                <tr>
+                  <th>{copy.common.week}</th>
+                  <th>{copy.common.problem}</th>
+                  <th>{zh ? "最佳分數" : "Best score"}</th>
+                  <th>{zh ? "提交數" : "Submissions"}</th>
+                  <th>{zh ? "狀態" : "Status"}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {selected.progress
+                  .filter((row) => row.submissions > 0)
+                  .map((row) => (
+                    <tr key={row.id}>
+                      <td>{row.week}</td>
+                      <td>{zh ? row.title : row.title_en || row.title}</td>
+                      <td>{row.best_score ?? "—"}</td>
+                      <td>{row.submissions}</td>
+                      <td>{row.solved ? (zh ? "✅ 已解出" : "✅ Solved") : (zh ? "未解出" : "Not solved")}</td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+            {selected.progress.every((row) => row.submissions === 0) && (
+              <p className="muted">{zh ? "此學生尚未有任何提交。" : "No submissions yet."}</p>
+            )}
+          </div>
+
+          <h3 className="student-detail-sub">{zh ? "作答紀錄" : "Submission history"}</h3>
+          <div className="staff-table-wrap">
+            <table className="staff-table">
+              <thead>
+                <tr>
+                  <th>{zh ? "時間" : "Time"}</th>
+                  <th>{copy.common.problem}</th>
+                  <th>{zh ? "分數" : "Score"}</th>
+                  <th>{zh ? "測資" : "Tests"}</th>
+                  <th>{zh ? "耗時" : "Runtime"}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {selected.submissions.map((sub) => (
+                  <tr key={sub.id}>
+                    <td>{formatStaffDate(sub.created_at, language)}</td>
+                    <td>{zh ? sub.title : sub.title_en || sub.title}</td>
+                    <td>{sub.passed ? `✅ ${sub.score}` : sub.score}</td>
+                    <td>{sub.passed_tests}/{sub.total_tests}</td>
+                    <td>{sub.runtime_ms}ms</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {selected.submissions.length === 0 && (
+              <p className="muted">{zh ? "此學生尚未有任何提交。" : "No submissions yet."}</p>
+            )}
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function AccountsPanel({ token, language }: { token: string; language: Language }) {
+  const zh = language === "zh";
+  const [teachers, setTeachers] = useState<TeacherRow[]>([]);
+  const [form, setForm] = useState({ name: "", email: "", password: "" });
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [resetInfo, setResetInfo] = useState<{ name: string; password: string } | null>(null);
+
+  useEffect(() => {
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]);
+
+  async function load() {
+    try {
+      const res = await api<{ teachers: TeacherRow[] }>("/api/admin/teachers", {}, token);
+      setTeachers(res.teachers);
+    } catch (e) {
+      setError(readError(e, zh ? "載入教師列表失敗" : "Failed to load teachers"));
+    }
+  }
+
+  async function createTeacher(event: FormEvent) {
+    event.preventDefault();
+    setError("");
+    setMessage("");
+    setLoading(true);
+    try {
+      await api("/api/admin/teachers", { method: "POST", body: JSON.stringify(form) }, token);
+      setMessage(zh ? `已建立教師帳號：${form.name}` : `Teacher created: ${form.name}`);
+      setForm({ name: "", email: "", password: "" });
+      await load();
+    } catch (e) {
+      setError(readError(e, zh ? "建立教師帳號失敗" : "Failed to create teacher"));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function resetTeacher(teacher: TeacherRow) {
+    const confirmMsg = zh
+      ? `確定要重設教師「${teacher.name}」的密碼嗎？`
+      : `Reset password for teacher "${teacher.name}"?`;
+    if (!window.confirm(confirmMsg)) return;
+    setError("");
+    try {
+      const res = await api<{ tempPassword: string }>(
+        `/api/staff/users/${teacher.id}/reset-password`,
+        { method: "POST" },
+        token
+      );
+      setResetInfo({ name: teacher.name, password: res.tempPassword });
+    } catch (e) {
+      setError(readError(e, zh ? "重設密碼失敗" : "Failed to reset password"));
+    }
+  }
+
+  return (
+    <section className="teacher-upload-grid">
+      <form className="panel upload-form" onSubmit={createTeacher}>
+        <div className="panel-title-row">
+          <h2>{zh ? "新增教師帳號" : "Add teacher account"}</h2>
+        </div>
+        <div className="form-grid">
+          <label className="wide">
+            {zh ? "姓名" : "Name"}
+            <input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} />
+          </label>
+          <label className="wide">
+            Email
+            <input type="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} />
+          </label>
+          <label className="wide">
+            {zh ? "密碼（至少 8 碼）" : "Password (min 8)"}
+            <input
+              type="text"
+              value={form.password}
+              onChange={(event) => setForm({ ...form, password: event.target.value })}
+              placeholder={zh ? "教師首次登入用" : "For first login"}
+            />
+          </label>
+        </div>
+        {error && <p className="form-error">{error}</p>}
+        {message && <p className="form-success">{message}</p>}
+        <div className="form-actions">
+          <button className="primary-button" disabled={loading}>
+            {zh ? "建立教師帳號" : "Create teacher"}
+          </button>
+        </div>
+      </form>
+
+      <aside className="panel">
+        <div className="panel-title-row">
+          <h2>{zh ? `教師列表（${teachers.length}）` : `Teachers (${teachers.length})`}</h2>
+        </div>
+        {resetInfo && (
+          <div className="reset-banner">
+            <div>
+              <strong>{zh ? "已重設密碼" : "Password reset"}</strong>
+              <span>
+                {zh ? `${resetInfo.name} 的臨時密碼：` : `Temp password for ${resetInfo.name}: `}
+                <code className="temp-password">{resetInfo.password}</code>
+              </span>
+            </div>
+            <button className="ghost-button compact" onClick={() => setResetInfo(null)}>
+              {zh ? "關閉" : "Close"}
+            </button>
+          </div>
+        )}
+        {teachers.length === 0 ? (
+          <p className="muted">{zh ? "目前沒有教師帳號。" : "No teacher accounts yet."}</p>
+        ) : (
+          <div className="staff-table-wrap">
+            <table className="staff-table">
+              <thead>
+                <tr>
+                  <th>{zh ? "姓名" : "Name"}</th>
+                  <th>Email</th>
+                  <th>{zh ? "建立時間" : "Created"}</th>
+                  <th>{zh ? "動作" : "Actions"}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {teachers.map((teacher) => (
+                  <tr key={teacher.id}>
+                    <td>{teacher.name}</td>
+                    <td className="staff-email">{teacher.email}</td>
+                    <td>{formatStaffDate(teacher.created_at, language)}</td>
+                    <td className="staff-actions">
+                      <button className="ghost-button compact" onClick={() => resetTeacher(teacher)}>
+                        {zh ? "重設密碼" : "Reset password"}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </aside>
+    </section>
   );
 }
 
