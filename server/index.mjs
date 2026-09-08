@@ -23,21 +23,31 @@ app.get("/api/health", (_req, res) => {
 });
 
 app.post("/api/auth/register", (req, res) => {
-  const { name, email, studentId, password } = req.body || {};
+  const { name, email, studentId, password, classCode } = req.body || {};
   const errors = validateStudentRegistration({ name, email, studentId, password });
   if (errors.length) return res.status(400).json({ error: errors.join("；") });
+
+  // 班級代碼為選填；有填但查無此代碼則擋下，空白則歸未分班。
+  let classId = null;
+  const trimmedCode = String(classCode || "").trim();
+  if (trimmedCode) {
+    const found = db.prepare("SELECT id FROM classes WHERE code = ?").get(trimmedCode);
+    if (!found) return res.status(400).json({ error: "班級代碼不存在，請向老師確認或留空。" });
+    classId = found.id;
+  }
 
   try {
     const result = db
       .prepare(
-        `INSERT INTO users (name, email, student_id, password_hash, role)
-         VALUES (@name, @email, @studentId, @passwordHash, 'student')`
+        `INSERT INTO users (name, email, student_id, password_hash, role, class_id)
+         VALUES (@name, @email, @studentId, @passwordHash, 'student', @classId)`
       )
       .run({
         name: name.trim(),
         email: email.trim().toLowerCase(),
         studentId: studentId.trim(),
-        passwordHash: bcrypt.hashSync(password, 12)
+        passwordHash: bcrypt.hashSync(password, 12),
+        classId
       });
 
     const user = getUserById(result.lastInsertRowid);
@@ -139,8 +149,17 @@ app.get("/api/problems/:slug/submissions", requireAuth, (req, res) => {
   res.json({ submissions: submissions.map(publicSubmission) });
 });
 
-app.get("/api/leaderboard", (_req, res) => {
-  res.json(buildGlobalLeaderboard());
+app.get("/api/leaderboard", optionalAuth, (req, res) => {
+  const isStaff = req.user?.role === "admin" || req.user?.role === "teacher";
+  const raw = req.query.classId;
+  const classId = raw && raw !== "all" && raw !== "" ? Number(raw) : null;
+  // 只有教師/管理員可依班級篩選（避免對外洩漏班級清單）。
+  const result = buildGlobalLeaderboard(isStaff ? classId : null);
+  if (isStaff) {
+    result.classes = db.prepare("SELECT id, name FROM classes ORDER BY name, id").all();
+    result.classId = classId;
+  }
+  res.json(result);
 });
 
 app.get("/api/problems/:slug/attempt-state", requireAuth, (req, res) => {
@@ -652,25 +671,36 @@ app.post("/api/staff/users/:id/reset-password", requireStaff, (req, res) => {
 });
 
 // ── 學生總覽（教師或管理員）──────────────────────────────
-app.get("/api/staff/students", requireStaff, (_req, res) => {
+app.get("/api/staff/students", requireStaff, (req, res) => {
+  const classFilter = req.query.classId;
+  const conditions = ["u.role = 'student'"];
+  const params = {};
+  if (classFilter === "none") {
+    conditions.push("u.class_id IS NULL");
+  } else if (classFilter !== undefined && classFilter !== "" && classFilter !== "all") {
+    conditions.push("u.class_id = @classId");
+    params.classId = Number(classFilter);
+  }
   const students = db
     .prepare(
       `SELECT u.id, u.name, u.email, u.student_id, u.created_at,
+              u.class_id, c.name AS class_name, c.code AS class_code,
               COALESCE(SUM(pp.cnt), 0) AS submissions,
               COALESCE(SUM(CASE WHEN pp.solved = 1 THEN 1 ELSE 0 END), 0) AS solved,
               COALESCE(SUM(pp.best), 0) AS best_score_sum,
               MAX(pp.last_at) AS last_activity
        FROM users u
+       LEFT JOIN classes c ON c.id = u.class_id
        LEFT JOIN (
          SELECT user_id, problem_id, COUNT(*) AS cnt, MAX(score) AS best,
                 MAX(passed) AS solved, MAX(created_at) AS last_at
          FROM submissions GROUP BY user_id, problem_id
        ) pp ON pp.user_id = u.id
-       WHERE u.role = 'student'
+       WHERE ${conditions.join(" AND ")}
        GROUP BY u.id
        ORDER BY u.name, u.id`
     )
-    .all();
+    .all(params);
   const problemsTotal = db.prepare("SELECT COUNT(*) AS count FROM problems").get().count;
   const openProblemsTotal = db.prepare("SELECT COUNT(*) AS count FROM problems WHERE is_open = 1").get().count;
   res.json({ students, problemsTotal, openProblemsTotal });
@@ -707,6 +737,103 @@ app.get("/api/staff/students/:id", requireStaff, (req, res) => {
     )
     .all(student.id);
   res.json({ student: publicUser(student), progress, submissions });
+});
+
+// ── 班級管理（教師或管理員；班級為共用標籤）──────────────
+app.get("/api/staff/classes", requireStaff, (_req, res) => {
+  const classes = db
+    .prepare(
+      `SELECT c.id, c.code, c.name, c.created_at,
+              (SELECT COUNT(*) FROM users u WHERE u.class_id = c.id AND u.role = 'student') AS student_count
+       FROM classes c
+       ORDER BY c.name, c.id`
+    )
+    .all();
+  const unassigned = db
+    .prepare("SELECT COUNT(*) AS count FROM users WHERE role = 'student' AND class_id IS NULL")
+    .get().count;
+  res.json({ classes, unassigned });
+});
+
+app.post("/api/staff/classes", requireStaff, (req, res) => {
+  const name = String(req.body?.name || "").trim();
+  if (!name) return res.status(400).json({ error: "請輸入班級名稱" });
+  let code = String(req.body?.code || "").trim().toUpperCase();
+  if (code) {
+    if (!/^[A-Z0-9-]{2,20}$/.test(code)) {
+      return res.status(400).json({ error: "班級代碼需為 2-20 碼的英數字或連字號" });
+    }
+  } else {
+    code = generateClassCode();
+  }
+  try {
+    const result = db.prepare("INSERT INTO classes (code, name) VALUES (?, ?)").run(code, name);
+    res.status(201).json({ class: db.prepare("SELECT id, code, name, created_at FROM classes WHERE id = ?").get(result.lastInsertRowid) });
+  } catch (error) {
+    if (String(error.message).includes("UNIQUE")) {
+      return res.status(409).json({ error: "此班級代碼已存在，請換一個。" });
+    }
+    throw error;
+  }
+});
+
+app.patch("/api/staff/classes/:id", requireStaff, (req, res) => {
+  const id = Number(req.params.id);
+  const existing = db.prepare("SELECT * FROM classes WHERE id = ?").get(id);
+  if (!existing) return res.status(404).json({ error: "找不到班級" });
+  const updates = [];
+  const values = [];
+  if ("name" in (req.body || {})) {
+    const name = String(req.body.name || "").trim();
+    if (!name) return res.status(400).json({ error: "班級名稱不可為空" });
+    updates.push("name = ?");
+    values.push(name);
+  }
+  if ("code" in (req.body || {})) {
+    const code = String(req.body.code || "").trim().toUpperCase();
+    if (!/^[A-Z0-9-]{2,20}$/.test(code)) {
+      return res.status(400).json({ error: "班級代碼需為 2-20 碼的英數字或連字號" });
+    }
+    updates.push("code = ?");
+    values.push(code);
+  }
+  if (!updates.length) return res.json({ class: existing });
+  try {
+    values.push(id);
+    db.prepare(`UPDATE classes SET ${updates.join(", ")} WHERE id = ?`).run(...values);
+    res.json({ class: db.prepare("SELECT id, code, name, created_at FROM classes WHERE id = ?").get(id) });
+  } catch (error) {
+    if (String(error.message).includes("UNIQUE")) {
+      return res.status(409).json({ error: "此班級代碼已存在，請換一個。" });
+    }
+    throw error;
+  }
+});
+
+app.delete("/api/staff/classes/:id", requireStaff, (req, res) => {
+  const id = Number(req.params.id);
+  const existing = db.prepare("SELECT id FROM classes WHERE id = ?").get(id);
+  if (!existing) return res.status(404).json({ error: "找不到班級" });
+  // classes 被刪除時，users.class_id 會依 FK 設為 NULL（學生退回未分班）。
+  db.prepare("DELETE FROM classes WHERE id = ?").run(id);
+  res.json({ ok: true });
+});
+
+// 指派 / 移動 / 移出 學生的班級（classId 為 null 代表移出班級）
+app.post("/api/staff/users/:id/class", requireStaff, (req, res) => {
+  const target = getUserById(Number(req.params.id));
+  if (!target || target.role !== "student") {
+    return res.status(404).json({ error: "找不到學生" });
+  }
+  const raw = req.body?.classId;
+  let classId = null;
+  if (raw !== null && raw !== undefined && raw !== "" && raw !== "none") {
+    const found = db.prepare("SELECT id FROM classes WHERE id = ?").get(Number(raw));
+    if (!found) return res.status(400).json({ error: "找不到指定的班級" });
+    classId = found.id;
+  }
+  db.prepare("UPDATE users SET class_id = ? WHERE id = ?").run(classId, target.id);
+  res.json({ user: publicUser(getUserById(target.id)) });
 });
 
 app.use("/api", (_req, res) => {
@@ -764,6 +891,18 @@ function generateTempPassword() {
   let out = "";
   for (let i = 0; i < 10; i += 1) out += alphabet[bytes[i] % alphabet.length];
   return out;
+}
+
+// 產生易讀的班級代碼（大寫字母 + 數字，避開易混淆字元），並確保未重複。
+function generateClassCode() {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const bytes = crypto.randomBytes(6);
+    let code = "";
+    for (let i = 0; i < 6; i += 1) code += alphabet[bytes[i] % alphabet.length];
+    if (!db.prepare("SELECT id FROM classes WHERE code = ?").get(code)) return code;
+  }
+  return `C${Date.now().toString(36).toUpperCase()}`;
 }
 
 function signToken(user) {
@@ -833,6 +972,7 @@ function publicUser(user) {
     email: user.email,
     studentId: user.student_id,
     role: user.role,
+    classId: user.class_id ?? null,
     createdAt: user.created_at
   };
 }
@@ -1192,11 +1332,15 @@ function throwHttp(status, message, attemptState) {
   throw error;
 }
 
-function buildGlobalLeaderboard() {
+function buildGlobalLeaderboard(classId = null) {
   const now = Date.now();
-  const students = db
-    .prepare("SELECT id, name, student_id FROM users WHERE role = 'student' ORDER BY name, id")
-    .all();
+  const students = classId
+    ? db
+        .prepare("SELECT id, name, student_id FROM users WHERE role = 'student' AND class_id = ? ORDER BY name, id")
+        .all(classId)
+    : db
+        .prepare("SELECT id, name, student_id FROM users WHERE role = 'student' ORDER BY name, id")
+        .all();
 
   const explanation = {
     title: "週賽排行榜計算方式",

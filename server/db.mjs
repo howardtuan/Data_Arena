@@ -38,6 +38,13 @@ export function resetDatabaseFile() {
 
 function migrate(database) {
   database.exec(`
+    CREATE TABLE IF NOT EXISTS classes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      code TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
     CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
@@ -45,6 +52,7 @@ function migrate(database) {
       student_id TEXT UNIQUE,
       password_hash TEXT NOT NULL,
       role TEXT NOT NULL CHECK (role IN ('student', 'teacher', 'admin')),
+      class_id INTEGER REFERENCES classes(id) ON DELETE SET NULL,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -152,6 +160,8 @@ function migrate(database) {
   ensureColumn(database, "submissions", "peak_memory", "peak_memory INTEGER NOT NULL DEFAULT 0");
   ensureColumn(database, "problems", "kind", "kind TEXT NOT NULL DEFAULT 'python'");
   migrateUserRoles(database);
+  // class_id 於 migrateUserRoles（可能重建 users 表）之後再加，避免被重建流程移除。
+  ensureColumn(database, "users", "class_id", "class_id INTEGER REFERENCES classes(id) ON DELETE SET NULL");
 }
 
 // 既有資料庫的 users.role CHECK 只允許 (student, admin)。SQLite 無法直接改 CHECK，

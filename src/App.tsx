@@ -19,6 +19,7 @@ type User = {
   email: string;
   studentId: string | null;
   role: "student" | "teacher" | "admin";
+  classId?: number | null;
 };
 
 type PublicTest = {
@@ -218,6 +219,8 @@ const COPY = {
       name: "姓名",
       studentId: "學號",
       password: "密碼",
+      classCode: "班級代碼（選填）",
+      classCodePlaceholder: "由老師提供，可留空",
       submitRegister: "建立學生帳號",
       tabsLabel: "登入或註冊"
     },
@@ -451,6 +454,8 @@ const COPY = {
       name: "Name",
       studentId: "Student ID",
       password: "Password",
+      classCode: "Class code (optional)",
+      classCodePlaceholder: "Provided by your teacher; leave blank if none",
       submitRegister: "Create student account",
       tabsLabel: "Login or register"
     },
@@ -759,7 +764,7 @@ function App() {
   const [adminProblems, setAdminProblems] = useState<Problem[]>([]);
   const [uploadForm, setUploadForm] = useState<ProblemForm>(DEFAULT_PROBLEM_FORM);
   const [editingProblemId, setEditingProblemId] = useState<number | null>(null);
-  const [authForm, setAuthForm] = useState({ name: "", studentId: "", email: "", password: "" });
+  const [authForm, setAuthForm] = useState({ name: "", studentId: "", email: "", password: "", classCode: "" });
   const [status, setStatus] = useState("");
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
@@ -1206,7 +1211,7 @@ function App() {
         )}
 
         {view === "tutorial" && <TutorialView user={user} copy={copy} />}
-        {view === "leaderboard" && <LeaderboardView leaderboard={leaderboard} explanation={leaderboardExplanation} language={language} copy={copy} />}
+        {view === "leaderboard" && <LeaderboardView leaderboard={leaderboard} explanation={leaderboardExplanation} language={language} copy={copy} token={token} user={user} />}
         {view === "contest" && <ContestView problems={problems} language={language} copy={copy} onOpenProblem={openProblem} />}
         {view === "progress" && <ProgressView user={user} progress={progress} language={language} copy={copy} />}
         {view === "teacher" && (
@@ -1327,11 +1332,11 @@ function AuthPage({
   onSubmit
 }: {
   mode: AuthMode;
-  form: { name: string; studentId: string; email: string; password: string };
+  form: { name: string; studentId: string; email: string; password: string; classCode: string };
   loading: boolean;
   copy: Copy;
   onMode: (mode: AuthMode) => void;
-  onForm: (form: { name: string; studentId: string; email: string; password: string }) => void;
+  onForm: (form: { name: string; studentId: string; email: string; password: string; classCode: string }) => void;
   onSubmit: (event: FormEvent) => void;
 }) {
   return (
@@ -1355,6 +1360,15 @@ function AuthPage({
             <label>
               {copy.auth.studentId}
               <input value={form.studentId} onChange={(event) => onForm({ ...form, studentId: event.target.value })} autoComplete="off" />
+            </label>
+            <label>
+              {copy.auth.classCode}
+              <input
+                value={form.classCode}
+                onChange={(event) => onForm({ ...form, classCode: event.target.value })}
+                placeholder={copy.auth.classCodePlaceholder}
+                autoComplete="off"
+              />
             </label>
           </>
         )}
@@ -2181,14 +2195,52 @@ function LeaderboardView({
   leaderboard,
   explanation,
   language,
-  copy
+  copy,
+  token,
+  user
 }: {
   leaderboard: LeaderboardEntry[];
   explanation: LeaderboardExplanation | null;
   language: Language;
   copy: Copy;
+  token: string;
+  user: User | null;
 }) {
+  const zh = language === "zh";
+  const isStaff = user?.role === "admin" || user?.role === "teacher";
   const [showRules, setShowRules] = useState(false);
+  const [classId, setClassId] = useState("all");
+  const [classes, setClasses] = useState<{ id: number; name: string }[]>([]);
+  const [staffRows, setStaffRows] = useState<LeaderboardEntry[] | null>(null);
+
+  useEffect(() => {
+    if (!isStaff) {
+      setStaffRows(null);
+      return;
+    }
+    let live = true;
+    (async () => {
+      try {
+        const q = classId && classId !== "all" ? `?classId=${encodeURIComponent(classId)}` : "";
+        const res = await api<{ leaderboard: LeaderboardEntry[]; classes?: { id: number; name: string }[] }>(
+          `/api/leaderboard${q}`,
+          {},
+          token
+        );
+        if (!live) return;
+        setStaffRows(res.leaderboard);
+        if (res.classes) setClasses(res.classes);
+      } catch {
+        /* 保持顯示現有資料 */
+      }
+    })();
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isStaff, token, classId]);
+
+  const rows = isStaff && staffRows !== null ? staffRows : leaderboard;
 
   return (
     <section className="page-stack">
@@ -2197,7 +2249,17 @@ function LeaderboardView({
           <h1>{copy.leaderboard.title}</h1>
           <p>{copy.leaderboard.intro}</p>
         </div>
-        <button className="ghost-button" onClick={() => setShowRules((current) => !current)}>{copy.leaderboard.rules}</button>
+        <div className="staff-filters">
+          {isStaff && (
+            <select className="staff-search" value={classId} onChange={(event) => setClassId(event.target.value)}>
+              <option value="all">{zh ? "全部班級" : "All classes"}</option>
+              {classes.map((c) => (
+                <option key={c.id} value={String(c.id)}>{c.name}</option>
+              ))}
+            </select>
+          )}
+          <button className="ghost-button" onClick={() => setShowRules((current) => !current)}>{copy.leaderboard.rules}</button>
+        </div>
       </div>
       {showRules && explanation && (
         <section className="panel ranking-rules">
@@ -2209,7 +2271,7 @@ function LeaderboardView({
         </section>
       )}
       <section className="panel table-panel">
-        {leaderboard.length === 0 ? (
+        {rows.length === 0 ? (
           <p className="empty-state">{copy.leaderboard.empty}</p>
         ) : (
           <table className="ranking-table global-ranking">
@@ -2219,7 +2281,7 @@ function LeaderboardView({
               </tr>
             </thead>
             <tbody>
-              {leaderboard.map((entry) => (
+              {rows.map((entry) => (
                 <tr key={entry.studentId}>
                   <td>{entry.rank}</td>
                   <td>{entry.name}<span>{entry.studentId}</span></td>
@@ -2577,11 +2639,15 @@ type StaffStudent = {
   email: string;
   student_id: string | null;
   created_at: string;
+  class_id: number | null;
+  class_name: string | null;
+  class_code: string | null;
   submissions: number;
   solved: number;
   best_score_sum: number;
   last_activity: string | null;
 };
+type ClassRow = { id: number; code: string; name: string; created_at: string; student_count: number };
 type StaffProgressRow = {
   id: number;
   slug: string;
@@ -2638,30 +2704,113 @@ function StudentsView({
 }) {
   const zh = language === "zh";
   const [students, setStudents] = useState<StaffStudent[]>([]);
+  const [classes, setClasses] = useState<ClassRow[]>([]);
+  const [unassigned, setUnassigned] = useState(0);
   const [problemsTotal, setProblemsTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
+  const [classFilter, setClassFilter] = useState<string>("all");
+  const [newClassName, setNewClassName] = useState("");
+  const [newClassCode, setNewClassCode] = useState("");
   const [selected, setSelected] = useState<StaffStudentDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [resetInfo, setResetInfo] = useState<{ name: string; password: string } | null>(null);
 
   useEffect(() => {
-    void load();
+    void loadClasses();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
-  async function load() {
+  useEffect(() => {
+    void loadStudents();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, classFilter]);
+
+  async function loadStudents() {
     setLoading(true);
     setError("");
     try {
-      const res = await api<{ students: StaffStudent[]; problemsTotal: number }>("/api/staff/students", {}, token);
+      const q = classFilter && classFilter !== "all" ? `?classId=${encodeURIComponent(classFilter)}` : "";
+      const res = await api<{ students: StaffStudent[]; problemsTotal: number }>(`/api/staff/students${q}`, {}, token);
       setStudents(res.students);
       setProblemsTotal(res.problemsTotal);
     } catch (e) {
       setError(readError(e, zh ? "載入學生資料失敗" : "Failed to load students"));
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function loadClasses() {
+    try {
+      const res = await api<{ classes: ClassRow[]; unassigned: number }>("/api/staff/classes", {}, token);
+      setClasses(res.classes);
+      setUnassigned(res.unassigned);
+    } catch (e) {
+      setError(readError(e, zh ? "載入班級失敗" : "Failed to load classes"));
+    }
+  }
+
+  async function createClass(event: FormEvent) {
+    event.preventDefault();
+    if (!newClassName.trim()) return;
+    setError("");
+    try {
+      await api(
+        "/api/staff/classes",
+        { method: "POST", body: JSON.stringify({ name: newClassName.trim(), code: newClassCode.trim() }) },
+        token
+      );
+      setNewClassName("");
+      setNewClassCode("");
+      await loadClasses();
+    } catch (e) {
+      setError(readError(e, zh ? "建立班級失敗" : "Failed to create class"));
+    }
+  }
+
+  async function renameClass(row: ClassRow) {
+    const name = window.prompt(zh ? "新的班級名稱：" : "New class name:", row.name);
+    if (name === null || !name.trim()) return;
+    setError("");
+    try {
+      await api(`/api/staff/classes/${row.id}`, { method: "PATCH", body: JSON.stringify({ name: name.trim() }) }, token);
+      await loadClasses();
+      await loadStudents();
+    } catch (e) {
+      setError(readError(e, zh ? "改名失敗" : "Failed to rename"));
+    }
+  }
+
+  async function deleteClass(row: ClassRow) {
+    const msg = zh
+      ? `確定刪除班級「${row.name}」嗎？該班學生會變成「未分班」（不會刪除學生）。`
+      : `Delete class "${row.name}"? Its students become unassigned (students are not deleted).`;
+    if (!window.confirm(msg)) return;
+    setError("");
+    try {
+      await api(`/api/staff/classes/${row.id}`, { method: "DELETE" }, token);
+      if (classFilter === String(row.id)) setClassFilter("all");
+      await loadClasses();
+      await loadStudents();
+    } catch (e) {
+      setError(readError(e, zh ? "刪除班級失敗" : "Failed to delete class"));
+    }
+  }
+
+  async function changeStudentClass(studentRow: StaffStudent, value: string) {
+    setError("");
+    try {
+      await api(
+        `/api/staff/users/${studentRow.id}/class`,
+        { method: "POST", body: JSON.stringify({ classId: value === "none" ? null : Number(value) }) },
+        token
+      );
+      await loadClasses();
+      await loadStudents();
+    } catch (e) {
+      setError(readError(e, zh ? "調整班級失敗" : "Failed to change class"));
     }
   }
 
@@ -2740,13 +2889,71 @@ function StudentsView({
 
       <div className="panel">
         <div className="panel-title-row">
-          <h2>{zh ? `學生列表（${filtered.length}）` : `Students (${filtered.length})`}</h2>
+          <h2>{zh ? `班級管理（${classes.length}）` : `Classes (${classes.length})`}</h2>
+          <span className="muted">{zh ? `未分班學生：${unassigned}` : `Unassigned: ${unassigned}`}</span>
+        </div>
+        <form className="class-create-row" onSubmit={createClass}>
           <input
-            className="staff-search"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder={zh ? "搜尋姓名 / 學號 / Email" : "Search name / ID / email"}
+            value={newClassName}
+            onChange={(event) => setNewClassName(event.target.value)}
+            placeholder={zh ? "班級名稱（例如：資料科學一）" : "Class name"}
           />
+          <input
+            value={newClassCode}
+            onChange={(event) => setNewClassCode(event.target.value)}
+            placeholder={zh ? "代碼（選填，留空自動產生）" : "Code (optional)"}
+          />
+          <button className="primary-button" disabled={!newClassName.trim()}>
+            {zh ? "建立班級" : "Create class"}
+          </button>
+        </form>
+        {classes.length > 0 && (
+          <div className="staff-table-wrap">
+            <table className="staff-table">
+              <thead>
+                <tr>
+                  <th>{zh ? "班級名稱" : "Class name"}</th>
+                  <th>{zh ? "加入代碼" : "Join code"}</th>
+                  <th>{zh ? "人數" : "Students"}</th>
+                  <th>{zh ? "動作" : "Actions"}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {classes.map((c) => (
+                  <tr key={c.id}>
+                    <td>{c.name}</td>
+                    <td><code className="temp-password">{c.code}</code></td>
+                    <td>{c.student_count}</td>
+                    <td className="staff-actions">
+                      <button className="ghost-button compact" onClick={() => renameClass(c)}>{zh ? "改名" : "Rename"}</button>
+                      <button className="ghost-button compact" onClick={() => deleteClass(c)}>{zh ? "刪除" : "Delete"}</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <div className="panel">
+        <div className="panel-title-row">
+          <h2>{zh ? `學生列表（${filtered.length}）` : `Students (${filtered.length})`}</h2>
+          <div className="staff-filters">
+            <select className="staff-search" value={classFilter} onChange={(event) => setClassFilter(event.target.value)}>
+              <option value="all">{zh ? "全部班級" : "All classes"}</option>
+              <option value="none">{zh ? "未分班" : "Unassigned"}</option>
+              {classes.map((c) => (
+                <option key={c.id} value={String(c.id)}>{c.name}</option>
+              ))}
+            </select>
+            <input
+              className="staff-search"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder={zh ? "搜尋姓名 / 學號 / Email" : "Search name / ID / email"}
+            />
+          </div>
         </div>
         {loading ? (
           <p className="muted">{copy.common.loading}…</p>
@@ -2760,6 +2967,7 @@ function StudentsView({
                   <th>{zh ? "姓名" : "Name"}</th>
                   <th>{zh ? "學號" : "Student ID"}</th>
                   <th>Email</th>
+                  <th>{zh ? "班級" : "Class"}</th>
                   <th>{zh ? "解題" : "Solved"}</th>
                   <th>{zh ? "提交數" : "Submissions"}</th>
                   <th>{zh ? "總分" : "Total score"}</th>
@@ -2773,6 +2981,18 @@ function StudentsView({
                     <td>{s.name}</td>
                     <td>{s.student_id || "—"}</td>
                     <td className="staff-email">{s.email}</td>
+                    <td>
+                      <select
+                        className="class-select"
+                        value={s.class_id === null ? "none" : String(s.class_id)}
+                        onChange={(event) => changeStudentClass(s, event.target.value)}
+                      >
+                        <option value="none">{zh ? "未分班" : "Unassigned"}</option>
+                        {classes.map((c) => (
+                          <option key={c.id} value={String(c.id)}>{c.name}</option>
+                        ))}
+                      </select>
+                    </td>
                     <td>{s.solved}/{problemsTotal}</td>
                     <td>{s.submissions}</td>
                     <td>{s.best_score_sum}</td>
