@@ -1361,15 +1361,6 @@ function AuthPage({
               {copy.auth.studentId}
               <input value={form.studentId} onChange={(event) => onForm({ ...form, studentId: event.target.value })} autoComplete="off" />
             </label>
-            <label>
-              {copy.auth.classCode}
-              <input
-                value={form.classCode}
-                onChange={(event) => onForm({ ...form, classCode: event.target.value })}
-                placeholder={copy.auth.classCodePlaceholder}
-                autoComplete="off"
-              />
-            </label>
           </>
         )}
 
